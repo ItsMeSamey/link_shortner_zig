@@ -79,12 +79,24 @@ fn getResponse(input: []const u8) ![]const u8 {
   return "https://ziglang.org";
 }
 
-const Entry = packed struct {
+const EntryTag = enum(u1) {
+  value,
+  terminal,
+};
+
+const TerminalEntry = packed struct {
+  valueOffset: u32,
+  string: [18]u7,
+  padding: u1,
+  tag: EntryTag,
+};
+
+const ValueEntry = packed struct {
+  valueOffset: u32,
   nextOffset: u32,
   fragments: [UrlTableSize]u1,
   bitcount: u7,
-  hasValue: u1,
-  valueOffset: u32,
+  tag: EntryTag,
 
   pub const UrlTableSize: u8 = 88; // = '[' - '!' + 'z' - 'a' + 5
 
@@ -111,17 +123,20 @@ const Entry = packed struct {
   }
 };
 
+var globalTrie: std.ArrayList(ValueEntry) = undefined;
+
 test "toIndex, fromIndex" {
-  std.debug.print("{d}\n", .{ Entry.UrlTableSize });
+  std.debug.print("{d}\n", .{ ValueEntry.UrlTableSize });
   for (0..127) |char| {
-    const idx = Entry.CharToIndex(@intCast(char));
+    const idx = ValueEntry.CharToIndex(@intCast(char));
     if (idx == 255) continue;
 
-    std.testing.expect(idx < Entry.UrlTableSize);
-    std.testing.expect(Entry.IndexToChar(idx) == char);
+    std.testing.expect(idx < ValueEntry.UrlTableSize);
+    std.testing.expect(ValueEntry.IndexToChar(idx) == char);
   }
 }
 
-const Trie = std.ArrayList(Entry);
-
+test {
+  std.testing.refAllDeclsRecursive(@This());
+}
 
