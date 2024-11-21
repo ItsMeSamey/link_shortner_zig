@@ -72,7 +72,7 @@ const Server = struct {
   }
 };
 
-// The value struct that is stored in the values array
+// The value struct with redirection and timeout
 const Value = struct {
   // The redirect destination
   dest: []const u8,
@@ -170,6 +170,9 @@ const ReidrectionMap = struct {
 
 var server: Server = undefined;
 var rmap: ReidrectionMap = undefined;
+
+const env = @import("loadKvp.zig").loadKvpComptime(@embedFile(".env"));
+const auth = env.get("AUTH").?;
 
 // The main function to start the server
 pub fn main() !void {
@@ -283,8 +286,4 @@ fn getResponse(input: []u8) ![]const u8 {
 
   return error.Ok;
 }
-
-const env = @import("loadKvp.zig").loadKvpComptime(@embedFile(".env"));
-const auth = env.get("AUTH").?;
-
 

@@ -22,7 +22,7 @@ pub fn loadKvpComptime(file: []const u8) std.StaticStringMap([]const u8) {
 
     if (key.len == 0 or val.len == 0) continue;
 
-    kvpList = kvpList ++ .{ .{ .@"0" = key, .@"1" = val } };
+    kvpList = kvpList ++ [1]Kvp{ .{ .@"0" = key, .@"1" = val } };
   }
 
   return std.StaticStringMap([]const u8).initComptime(kvpList);
