@@ -225,7 +225,6 @@ const Response = union(enum) {
   }
 };
 
-
 fn HeadersStructFromFieldNames(comptime headerNames: []const []const u8) type {
   comptime var fields: [headerNames.len]std.builtin.Type.StructField = undefined;
   inline for (0.., headerNames) |i, name| {
@@ -301,57 +300,12 @@ fn getResponse(input: []u8) Response {
   const first = headersIterator.next() orelse return .{ .@"error" = 400 };
 
   if (first[4] == ' ') {
-    const Header = struct {
-      key: KeyEnum,
-      val: []const u8,
-
-      const KeyEnum = enum {
-        auth,
-        dest,
-        deth,
-        unknown,
-      };
-
-      fn parse(header: []u8) !@This() {
-        const i = std.mem.indexOfScalar(u8, header, ':') orelse return error.BadRequest;
-        const key = std.mem.trim(u8, std.ascii.lowerString(header[0..i], header[0..i]), " ");
-        return .{
-          .key = std.meta.stringToEnum(KeyEnum, key) orelse .unknown,
-          .val = std.mem.trim(u8, header[i+1 ..], " "),
-        };
-      }
-    };
-
-    var Headers = struct {
-      auth: []const u8,
-      dest: []const u8,
-      deth: []const u8,
-      found: u8,
-    }{
-      .auth = "",
-      .dest = "",
-      .deth = "",
-      .found = 0,
-    };
-
-    while (Headers.found < 3) {
-      const h = headersIterator.next() orelse return .{ .@"error" = 400 };
-      const header = Header.parse(@constCast(h)) catch return .{ .@"error" = 400 };
-      Headers.found += 1;
-      switch (header.key) {
-        .auth => if (Headers.auth.len == 0) { Headers.auth = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
-        .dest => if (Headers.dest.len == 0) { Headers.dest = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
-        .deth => if (Headers.deth.len == 0) { Headers.deth = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
-        else => {},
-      }
-    }
-
+    const Headers = parseHeaders(.{"auth", "dest", "death"}, headersIterator);
     if (!std.mem.eql(u8, Headers.auth, auth)) return .{ .@"error" = 401 };
 
-    // const dest = Headers.dest;
-    // const deathat = std.fmt.parseInt(u32, Headers.deth, 10) catch return .{ .@"error" = 400 };
-    // rmap.add(location, dest, deathat) catch return .{ .@"error" = 500 };
-
+    // const death = std.fmt.parseInt(u32, Headers.deth, 10) catch return .{ .@"error" = 400 };
+    @panic(first["~~~ ".len..first.len-"HTTP/1.1".len]);
+    // rmap.add(first["~~~ ".len..first.len-"HTTP/1.1".len], Headers.dest, death) catch return .{ .@"error" = 500 };
   }
 
   return .{ .@"error" = 200 };
