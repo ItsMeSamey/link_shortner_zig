@@ -17,7 +17,10 @@ const Server = struct {
     });
 
     const sock: i32 = @intCast(linux.socket(linux.AF.INET, linux.SOCK.STREAM, 0));
-    if (sock == 0) return std.debug.print("socket creation failed\n", .{});
+    if (sock == 0) {
+      std.debug.print("socket failed\n", .{});
+      return error.SocketError;
+    }
     errdefer _ = linux.close(sock);
 
     var err: usize = undefined;
@@ -45,12 +48,19 @@ const Server = struct {
   }
 
   // Wait for accept and return the client and request
-  pub fn accept(self: *Server, buf: []u8) !struct{ client: i32, request: []const u8 } {
+  pub fn accept(self: *Server, buf: []u8) !struct{
+    client: i32,
+    request: []u8,
+
+    pub fn close(conn: *const @This()) void {
+      _ = linux.close(conn.client);
+    }
+  } {
     const client: i32 = @intCast(linux.accept(self.sock, null, null));
     if (client < 0) return error.AcceptError;
     errdefer _ = linux.close(client);
 
-    const n = linux.read(client, &buf, buf.len);
+    const n = linux.read(client, buf.ptr, buf.len);
     if (n == 0) return error.ReadError;
 
     return .{ .client = client, .request = buf[0..n] };
@@ -70,19 +80,19 @@ const Value = struct {
   deathat: u32,
 };
 
-const Trie = struct {
+const ReidrectionMap = struct {
   map: Map,
 
   const Map = std.HashMap([]const u8, Value, struct {
-    fn hash(_: @This(), key: []const u8) u64 {
+    pub fn hash(_: @This(), key: []const u8) u64 {
       var retval: u64 = 0;
       for (0.., key) |i, c| {
-        retval = (retval << (i&7)) ^ (retval >> (64 ^ (i&63)));
+        retval = (retval << @intCast(i&7)) ^ (retval >> @intCast(64 ^ (i&63)));
         retval ^= c;
       }
       return retval;
     }
-    fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+    pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
       if (a.len != b.len) return false;
 
       if (a.len <= 16) {
@@ -132,89 +142,149 @@ const Trie = struct {
     }
   }, std.hash_map.default_max_load_percentage);
 
-  pub fn init(allocator: std.mem.Allocator) Trie {
+  pub fn init(allocator: std.mem.Allocator) ReidrectionMap {
     return .{
       .map = Map.init(allocator),
     };
   }
 
-  pub fn add(self: *Trie, location: []const u8, dest: []const u8, deathat: u32) !void {
+  pub fn add(self: *ReidrectionMap, location: []const u8, dest: []const u8, deathat: u32) !void {
     return self.map.put(location, .{
       .dest = dest,
       .deathat = deathat,
     });
   }
 
-  pub fn lookup(self: *Trie, location: []const u8) ?[]const u8 {
+  pub fn lookup(self: *ReidrectionMap, location: []const u8) ?[]const u8 {
     return if (self.map.get(location)) |v| v.dest else null;
   }
 
-  pub fn remove(self: *Trie, location: []const u8) void {
+  pub fn remove(self: *ReidrectionMap, location: []const u8) void {
     _ = self.map.remove(location);
   }
 
-  pub fn deinit(self: *Trie) void {
+  pub fn deinit(self: *ReidrectionMap) void {
     self.map.deinit();
   }
 };
 
 var server: Server = undefined;
-var trie: Trie = undefined;
+var rmap: ReidrectionMap = undefined;
 
 // The main function to start the server
-pub fn main() void {
+pub fn main() !void {
   comptime if (@import("builtin").os.tag != .linux) @compileError("Only Linux is supported");
 
   server = try Server.init(.{ 0, 0, 0, 0 }, 8080);
 
-  const gpa = std.heap.GeneralPurposeAllocator(.{}){};
-  trie = Trie.init(gpa.allocator());
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  rmap = ReidrectionMap.init(gpa.allocator());
 
   while (true) {
     var buf: [2048]u8 = undefined;
 
-    const client, const request = server.accept(buf[0..]) catch |e| {
-      std.debug.print("accept failed with {x}\n", .{ e });
+    const conn = server.accept(buf[0..]) catch |e| {
+      std.debug.print("accept failed with {s}\n", .{ @errorName(e) });
       continue;
     };
 
-    const response = getResponse(request) catch |e| {
+    defer conn.close();
+
+    const response = getResponse(conn.request) catch |e| {
       const resp = switch (e) {
-        error.Ok => "HTTP/1.1 200\r\n\r\n",
-        else => "HTTP/1.1 400\r\n\r\n"
+        error.Ok => "HTTP/1.1 200\r\nConnection:close\r\n\r\n",
+        error.BadRequest => "HTTP/1.1 400\r\nConnection:close\r\n\r\n",
+        error.Unauthorized => "HTTP/1.1 401\r\nConnection:close\r\n\r\n",
+        error.NotFound => "HTTP/1.1 404\r\nConnection:close\r\n\r\n",
+        else => "HTTP/1.1 500\r\nConnection:close\r\n\r\n",
       };
-      _ = linux.write(client, resp, resp.len);
-      return error.GetResponseError;
+      _ = linux.write(conn.client, resp.ptr, resp.len);
+      continue;
     };
 
-    _ = linux.write(client, "HTTP/1.1 302\r\nContent-Length:0\r\nLocation:", 41);
-    _ = linux.write(client, response.ptr, response.len);
-    _ = linux.write(client, "\r\n\r\n", 4);
+    _ = linux.write(conn.client, "HTTP/1.1 302\r\nConnection:close\r\nLocation:", 41);
+    _ = linux.write(conn.client, response.ptr, response.len);
+    _ = linux.write(conn.client, "\r\n\r\n", 4);
   }
 }
 
 // Get then redirection for the request
-fn getResponse(input: []const u8) ![]const u8 {
+fn getResponse(input: []u8) ![]const u8 {
   if (input.len < 14) return error.BadRequest;
 
   var end = 4 + (std.mem.indexOfScalar(u8, input[4..], ' ') orelse return error.BadRequest);
   if (input[end-1] == '/') end -= 1;
-
   const location = input[4..end];
-  if (input[0] == '~') {
-    // TODO: implement Add to trie
-    return error.Ok;
+
+  if (input[0] != '~' or input[1] != '~' or input[2] != '~') {
+    if(location.len == 0) {
+      // TODO: Login page Maybe
+    }
+
+    if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) return error.BadRequest;
+    return rmap.lookup(location) orelse error.NotFound;
   }
-  if (end == 4) return error.BadRequest;
 
-  if(location.len == 0) {
-    // TODO: Login page Maybe
+  if (location.len == 0) return error.BadRequest;
+
+  var headers = std.mem.tokenizeAny(u8, input, "\r\n");
+  _ = headers.next() orelse return error.BadRequest;
+
+  const Header = struct {
+    key: KeyEnum,
+    val: []const u8,
+
+    const KeyEnum = enum {
+      auth,
+      dest,
+      deth,
+      unknown,
+    };
+
+    fn parse(header: []u8) !@This() {
+      const i = std.mem.indexOfScalar(u8, header, ':') orelse return error.BadRequest;
+      const key = std.mem.trim(u8, std.ascii.lowerString(header[0..i], header[0..i]), " ");
+      return .{
+        .key = std.meta.stringToEnum(KeyEnum, key) orelse .unknown,
+        .val = std.mem.trim(u8, header[i+1 ..], " "),
+      };
+    }
+  };
+
+  var Headers = struct {
+    auth: []const u8,
+    dest: []const u8,
+    deth: []const u8,
+    found: u8,
+  }{
+    .auth = "",
+    .dest = "",
+    .deth = "",
+    .found = 0,
+  };
+
+  while (Headers.found < 3) {
+    const h = headers.next() orelse return error.BadRequest;
+    const header = Header.parse(@constCast(h)) catch |e| return e;
+    Headers.found += 1;
+    switch (header.key) {
+      .auth => if (Headers.auth.len == 0) { Headers.auth = header.val; Headers.found += 1; } else return error.BadRequest,
+      .dest => if (Headers.dest.len == 0) { Headers.dest = header.val; Headers.found += 1; } else return error.BadRequest,
+      .deth => if (Headers.deth.len == 0) { Headers.deth = header.val; Headers.found += 1; } else return error.BadRequest,
+      else => {},
+    }
   }
 
-  if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) return error.BadRequest;
+  if (!std.mem.eql(u8, Headers.auth, auth)) return error.Unauthorized;
 
-  // TODO: implement lookup
-  return "https://ziglang.org";
+  const dest = Headers.dest;
+  const deathat = std.fmt.parseInt(u32, Headers.deth, 10) catch return error.BadRequest;
+  try rmap.add(location, dest, deathat);
+
+  return error.Ok;
 }
+
+const env = @import("loadKvp.zig").loadKvpComptime(@embedFile(".env"));
+const auth = env.get("AUTH").?;
 
 
