@@ -1,24 +1,30 @@
 const std = @import("std");
 
+const Kvp = struct { @"0": []const u8, @"1": []const u8 };
+
+
 pub fn loadKvpComptime(file: []const u8) std.StaticStringMap([]const u8) {
   @setEvalBranchQuota(10_000);
   var it = std.mem.tokenizeAny(u8, file, "\r\n");
 
-  const pair = struct { @"0": []const u8, @"1": []const u8 };
-  comptime var kvpList: []const pair = &.{};
+  comptime var kvpList: []const Kvp = &.{};
 
-  inline while (it.next()) |line| {
-    if (line.len == 0) continue;
+  inline while (it.next()) |rawLine| {
+    const line = std.mem.trim(u8, rawLine, " \t");
+    if (line.len == 0 or line[0] == '#') continue;
 
     const i = std.mem.indexOfScalar(u8, line, '=') orelse continue;
     const key = std.mem.trim(u8, line[0..i], " ");
     const tempVal = std.mem.trim(u8, line[i+1 ..], " ");
-    var dataArr: [tempVal.len]u8 = undefined;
+
+    comptime var dataArr: [tempVal.len]u8 = undefined;
     const val = unescapeString(dataArr[0..], tempVal) catch |e| { @compileError(@errorName(e)); };
+
     if (key.len == 0 or val.len == 0) continue;
-    if (val[0] == '"' or val[0] == '\'') @compileError("Values cannot be escaped i.e. cannot start or end with \" or '");
+
     kvpList = kvpList ++ .{ .{ .@"0" = key, .@"1" = val } };
   }
+
   return std.StaticStringMap([]const u8).initComptime(kvpList);
 }
 
@@ -34,7 +40,7 @@ fn unescapeString(result: []u8, val: []const u8) ![]const u8 {
 
   // String must start and end with same kind of quotes
   if (val[0] != val[val.len - 1]) {
-    logFn("Invalid string --> {s} <--, it must start and end with the same kind of quotes", .{val});
+    logFn("Invalid string --> {s} <--. if it starts with a quote, it must end with the same kind of quote too", .{val});
     return error.InvalidString;
   }
 
@@ -65,8 +71,11 @@ fn unescapeString(result: []u8, val: []const u8) ![]const u8 {
         }
         resultIdx += 1;
       }
+
+      return result[0..resultIdx];
     },
     else => unreachable,
   }
+  unreachable;
 }
 
