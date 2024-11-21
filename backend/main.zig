@@ -55,6 +55,18 @@ const Server = struct {
     pub fn close(conn: *const @This()) void {
       _ = linux.close(conn.client);
     }
+
+
+    fn writer(client_self: *const @This()) std.io.AnyWriter {
+      return .{
+        .context = @ptrCast(client_self),
+        .writeFn = struct {
+          fn write(context: *const anyopaque, data: []const u8) !usize {
+            return linux.write(@as(@TypeOf(client_self), @ptrCast(@alignCast(context))).client, data.ptr, data.len);
+          }
+        }.write,
+      };
+    }
   } {
     const client: i32 = @intCast(linux.accept(self.sock, null, null));
     if (client < 0) return error.AcceptError;
@@ -193,45 +205,47 @@ pub fn main() !void {
 
     defer conn.close();
 
-    const response = getResponse(conn.request) catch |e| {
-      const resp = switch (e) {
-        error.Ok => "HTTP/1.1 200\r\nConnection:close\r\n\r\n",
-        error.BadRequest => "HTTP/1.1 400\r\nConnection:close\r\n\r\n",
-        error.Unauthorized => "HTTP/1.1 401\r\nConnection:close\r\n\r\n",
-        error.NotFound => "HTTP/1.1 404\r\nConnection:close\r\n\r\n",
-        else => "HTTP/1.1 500\r\nConnection:close\r\n\r\n",
-      };
-      _ = linux.write(conn.client, resp.ptr, resp.len);
-      continue;
+    getResponse(conn.request).send(conn.writer()) catch |e| {
+      std.debug.print("error: {s}\n", .{ @errorName(e) });
     };
-
-    _ = linux.write(conn.client, "HTTP/1.1 302\r\nConnection:close\r\nLocation:", 41);
-    _ = linux.write(conn.client, response.ptr, response.len);
-    _ = linux.write(conn.client, "\r\n\r\n", 4);
   }
 }
 
-// Get then redirection for the request
-fn getResponse(input: []u8) ![]const u8 {
-  if (input.len < 14) return error.BadRequest;
 
-  var end = 4 + (std.mem.indexOfScalar(u8, input[4..], ' ') orelse return error.BadRequest);
+const Response = union(enum) {
+  redirection: []const u8,
+  @"error": u16,
+  html: []const u8,
+
+  fn send(self: *const @This(), writer: std.io.AnyWriter) !void {
+    switch (self.*) {
+      .redirection => |redirection| try std.fmt.format(writer, "HTTP/1.1 302\r\nConnection:close\r\nLocation:{s}\r\n\r\n", .{ redirection }),
+      .html => |html| try std.fmt.format(writer, "HTTP/1.1 200\r\nContent-Length:{d}\r\n\r\n{s}", .{ html.len, html }),
+      .@"error" => |code| try std.fmt.format(writer, "HTTP/1.1 {d}\r\nConnection:close\r\n\r\n", .{ code }),
+    }
+  }
+};
+
+// Get then redirection for the request
+fn getResponse(input: []u8) Response {
+  if (input.len < 14) return .{ .@"error" = 400 };
+
+  var end = 4 + (std.mem.indexOfScalar(u8, input[4..], ' ') orelse return .{ .@"error" = 400 });
   if (input[end-1] == '/') end -= 1;
   const location = input[4..end];
 
   if (input[0] != '~' or input[1] != '~' or input[2] != '~') {
     if(location.len == 0) {
-      // TODO: Login page Maybe
     }
 
-    if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) return error.BadRequest;
-    return rmap.lookup(location) orelse error.NotFound;
+    if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) return  .{ .@"error" = 400 };
+    return .{ .redirection = rmap.lookup(location) orelse return .{ .@"error" = 404 } };
   }
 
-  if (location.len == 0) return error.BadRequest;
+  if (location.len == 0) return .{ .@"error" = 400 };
 
   var headers = std.mem.tokenizeAny(u8, input, "\r\n");
-  _ = headers.next() orelse return error.BadRequest;
+  _ = headers.next() orelse return .{ .@"error" = 400 };
 
   const Header = struct {
     key: KeyEnum,
@@ -267,23 +281,23 @@ fn getResponse(input: []u8) ![]const u8 {
   };
 
   while (Headers.found < 3) {
-    const h = headers.next() orelse return error.BadRequest;
-    const header = Header.parse(@constCast(h)) catch |e| return e;
+    const h = headers.next() orelse return .{ .@"error" = 400 };
+    const header = Header.parse(@constCast(h)) catch return .{ .@"error" = 400 };
     Headers.found += 1;
     switch (header.key) {
-      .auth => if (Headers.auth.len == 0) { Headers.auth = header.val; Headers.found += 1; } else return error.BadRequest,
-      .dest => if (Headers.dest.len == 0) { Headers.dest = header.val; Headers.found += 1; } else return error.BadRequest,
-      .deth => if (Headers.deth.len == 0) { Headers.deth = header.val; Headers.found += 1; } else return error.BadRequest,
+      .auth => if (Headers.auth.len == 0) { Headers.auth = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
+      .dest => if (Headers.dest.len == 0) { Headers.dest = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
+      .deth => if (Headers.deth.len == 0) { Headers.deth = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
       else => {},
     }
   }
 
-  if (!std.mem.eql(u8, Headers.auth, auth)) return error.Unauthorized;
+  if (!std.mem.eql(u8, Headers.auth, auth)) return .{ .@"error" = 401 };
 
   const dest = Headers.dest;
-  const deathat = std.fmt.parseInt(u32, Headers.deth, 10) catch return error.BadRequest;
-  try rmap.add(location, dest, deathat);
+  const deathat = std.fmt.parseInt(u32, Headers.deth, 10) catch return .{ .@"error" = 400 };
+  rmap.add(location, dest, deathat) catch return .{ .@"error" = 500 };
 
-  return error.Ok;
+  return .{ .@"error" = 200 };
 }
 
