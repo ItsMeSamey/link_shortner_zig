@@ -211,7 +211,6 @@ pub fn main() !void {
   }
 }
 
-
 const Response = union(enum) {
   redirection: []const u8,
   @"error": u16,
@@ -226,15 +225,70 @@ const Response = union(enum) {
   }
 };
 
+
+fn HeadersStructFromFieldNames(comptime headerNames: []const []const u8) type {
+  comptime var fields: [headerNames.len]std.builtin.Type.StructField = undefined;
+  inline for (0.., headerNames) |i, name| {
+    comptime var newName: [name.len]u8 = undefined;
+    std.ascii.lowerString(name, newName[0..]);
+
+    fields[i] = .{
+      .name = headerNames[i],
+      .type = []const u8,
+      .default_value = "",
+      .is_comptime = false,
+      .alignment = 0,
+    };
+  }
+
+  return @Type(std.builtin.Type{
+    .@"struct" = .{
+      .layout = .auto,
+      .fields = fields,
+      .decls = &[_]std.builtin.Type.Declaration{},
+      .is_tuple = false,
+    }
+  });
+}
+
+fn parseHeaders(comptime headerNames: []const []const u8, iterator: std.mem.TokenIterator(u8, .any)) !HeadersStructFromFieldNames(headerNames) {
+  const HeaderType = HeadersStructFromFieldNames(headerNames);
+  const HeaderEnum = std.meta.FieldEnum(HeaderType);
+  var headers: HeaderType = undefined;
+
+  var count = 0;
+  while (count < headerNames.len) {
+    const header = iterator.next() orelse return error.MissingHeaders!headers;
+
+    const i = std.mem.indexOfScalar(u8, header, ':') orelse return error.BadRequest;
+
+    // This is faster than direct inline for loop as stringToEnum uses a hash_map
+    const keyString = std.mem.trim(u8, std.ascii.lowerString(header[0..i], header[0..i]), " ");
+    const key = std.meta.stringToEnum(HeaderEnum, keyString) orelse continue;
+
+    count += 1;
+    const val = std.mem.trim(u8, header[i+1 ..], " ");
+
+    inline for (@typeInfo(HeaderEnum).Enum.fields) |field| {
+      if (@call(std.builtin.CallModifier.compile_time, std.mem.eql, .{ u8, field.name, @tagName(key) })) {
+        @field(headers, field.name) = val;
+        break;
+      }
+    }
+  }
+  return headers;
+}
+
 // Get then redirection for the request
 fn getResponse(input: []u8) Response {
   if (input.len < 14) return .{ .@"error" = 400 };
 
-  var end = 4 + (std.mem.indexOfScalar(u8, input[4..], ' ') orelse return .{ .@"error" = 400 });
-  if (input[end-1] == '/') end -= 1;
-  const location = input[4..end];
-
+  // All the normal requests
   if (input[0] != '~' or input[1] != '~' or input[2] != '~') {
+    var end = 4 + (std.mem.indexOfScalar(u8, input[4..], ' ') orelse return .{ .@"error" = 400 });
+    if (input[end-1] == '/') end -= 1;
+    const location = input[4..end];
+
     if(location.len == 0) {
     }
 
@@ -242,61 +296,63 @@ fn getResponse(input: []u8) Response {
     return .{ .redirection = rmap.lookup(location) orelse return .{ .@"error" = 404 } };
   }
 
-  if (location.len == 0) return .{ .@"error" = 400 };
+  // Special Admin requests
+  var headersIterator = std.mem.tokenizeAny(u8, input, "\r\n");
+  const first = headersIterator.next() orelse return .{ .@"error" = 400 };
 
-  var headers = std.mem.tokenizeAny(u8, input, "\r\n");
-  _ = headers.next() orelse return .{ .@"error" = 400 };
+  if (first[4] == ' ') {
+    const Header = struct {
+      key: KeyEnum,
+      val: []const u8,
 
-  const Header = struct {
-    key: KeyEnum,
-    val: []const u8,
+      const KeyEnum = enum {
+        auth,
+        dest,
+        deth,
+        unknown,
+      };
 
-    const KeyEnum = enum {
-      auth,
-      dest,
-      deth,
-      unknown,
+      fn parse(header: []u8) !@This() {
+        const i = std.mem.indexOfScalar(u8, header, ':') orelse return error.BadRequest;
+        const key = std.mem.trim(u8, std.ascii.lowerString(header[0..i], header[0..i]), " ");
+        return .{
+          .key = std.meta.stringToEnum(KeyEnum, key) orelse .unknown,
+          .val = std.mem.trim(u8, header[i+1 ..], " "),
+        };
+      }
     };
 
-    fn parse(header: []u8) !@This() {
-      const i = std.mem.indexOfScalar(u8, header, ':') orelse return error.BadRequest;
-      const key = std.mem.trim(u8, std.ascii.lowerString(header[0..i], header[0..i]), " ");
-      return .{
-        .key = std.meta.stringToEnum(KeyEnum, key) orelse .unknown,
-        .val = std.mem.trim(u8, header[i+1 ..], " "),
-      };
-    }
-  };
+    var Headers = struct {
+      auth: []const u8,
+      dest: []const u8,
+      deth: []const u8,
+      found: u8,
+    }{
+      .auth = "",
+      .dest = "",
+      .deth = "",
+      .found = 0,
+    };
 
-  var Headers = struct {
-    auth: []const u8,
-    dest: []const u8,
-    deth: []const u8,
-    found: u8,
-  }{
-    .auth = "",
-    .dest = "",
-    .deth = "",
-    .found = 0,
-  };
-
-  while (Headers.found < 3) {
-    const h = headers.next() orelse return .{ .@"error" = 400 };
-    const header = Header.parse(@constCast(h)) catch return .{ .@"error" = 400 };
-    Headers.found += 1;
-    switch (header.key) {
-      .auth => if (Headers.auth.len == 0) { Headers.auth = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
-      .dest => if (Headers.dest.len == 0) { Headers.dest = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
-      .deth => if (Headers.deth.len == 0) { Headers.deth = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
-      else => {},
+    while (Headers.found < 3) {
+      const h = headersIterator.next() orelse return .{ .@"error" = 400 };
+      const header = Header.parse(@constCast(h)) catch return .{ .@"error" = 400 };
+      Headers.found += 1;
+      switch (header.key) {
+        .auth => if (Headers.auth.len == 0) { Headers.auth = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
+        .dest => if (Headers.dest.len == 0) { Headers.dest = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
+        .deth => if (Headers.deth.len == 0) { Headers.deth = header.val; Headers.found += 1; } else return .{ .@"error" = 400 },
+        else => {},
+      }
     }
+
+    if (!std.mem.eql(u8, Headers.auth, auth)) return .{ .@"error" = 401 };
+
+    // const dest = Headers.dest;
+    // const deathat = std.fmt.parseInt(u32, Headers.deth, 10) catch return .{ .@"error" = 400 };
+    // rmap.add(location, dest, deathat) catch return .{ .@"error" = 500 };
+
   }
-
-  if (!std.mem.eql(u8, Headers.auth, auth)) return .{ .@"error" = 401 };
-
-  const dest = Headers.dest;
-  const deathat = std.fmt.parseInt(u32, Headers.deth, 10) catch return .{ .@"error" = 400 };
-  rmap.add(location, dest, deathat) catch return .{ .@"error" = 500 };
 
   return .{ .@"error" = 200 };
 }
