@@ -1,5 +1,3 @@
-test { std.testing.refAllDeclsRecursive(@This()); }
-
 const std = @import("std");
 const linux = std.os.linux;
 const TagType = @TypeOf(.enum_literal);
@@ -82,43 +80,80 @@ fn zeroLengthNormalRequest(input: []u8, responseWriter: ResponseWriter) !void {
 
 fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
   var headersIterator = std.mem.tokenizeAny(u8, input, "\r\n");
+
+  // First line is the request `[METHOD] [PATH] HTTP/1.1`
   const first = headersIterator.next() orelse return responseWriter.writeError(400);
+
+  // Extract the path from first line
   var location = first[std.mem.indexOfScalar(u8, first, ' ') orelse return responseWriter.writeError(400) ..];
   location.len = std.mem.indexOfScalar(u8, location, ' ') orelse return responseWriter.writeError(400);
   if (location.len > 0 and location[location.len - 1] == '/') location.len -= 1;
 
   if (location.len == 0) {
-    // Return the number of entries in the Map
-    var buf: [12]u8 = undefined;
-    const len = std.fmt.formatIntBuf(buf[0..], rmap.map.capacity(), 10, .lower, .{});
-    try responseWriter.writeString(buf[0..len]);
-  } else if (first[3] == ' ') {
-    const Headers = parseHeaders(enum{auth, dest, death}, &headersIterator) catch return responseWriter.writeError(400);
-    if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
+    switch (first[3]) {
+      '0' => {
+        // Add / Set an entry to the Map
 
-    const death = std.fmt.parseInt(u32, Headers.death, 10) catch return responseWriter.writeError(400);
-    rmap.add(location, Headers.dest, death) catch return responseWriter.writeError(500);
+        const Headers = parseHeaders(enum{auth, dest, death}, &headersIterator) catch return responseWriter.writeError(400);
+        if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
 
-    return responseWriter.writeError(200);
-  } else if (first[3] == 'v') {
-    const Headers = parseHeaders(enum{auth}, &headersIterator) catch return responseWriter.writeError(400);
-    if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
+        const death = std.fmt.parseInt(u32, Headers.death, 10) catch return responseWriter.writeError(400);
+        rmap.add(location, Headers.dest, death) catch return responseWriter.writeError(500);
 
-    var mapIterator = rmap.map.iterator();
-    var locationSplitIterator = std.mem.splitScalar(u8, location, ' ');
+        return responseWriter.writeError(200);
+      },
+      '1' => {
+        // Delete an entry from the Map
+        // This will always succeed network errors notwithstanding
 
-    const fromStr = locationSplitIterator.next() orelse return responseWriter.writeError(400);
-    const from = std.fmt.parseInt(u32, fromStr, 10) catch return responseWriter.writeError(400);
+        if (rmap.remove(location)) return responseWriter.writeError(200);
+        // Entry didnt even exist but okk!
+        return responseWriter.writeError(202);
+      },
+      else => {},
+    }
+  }
 
-    const lenStr = locationSplitIterator.next() orelse return responseWriter.writeError(400);
-    const len = std.fmt.parseInt(u32, lenStr, 10) catch return responseWriter.writeError(400);
+  switch (first[3]) {
+    '0' => {
+      // Return the number of entries in the Map
+      // A simple number is returned as body
 
-    if (from >= rmap.map.capacity()) return responseWriter.writeError(404);
-    mapIterator.index = from;
+      var buf: [12]u8 = undefined;
+      const len = std.fmt.formatIntBuf(buf[0..], rmap.map.count(), 10, .lower, .{});
+      try responseWriter.writeString(buf[0..len]);
+    },
+    '1' => {
+      // Get Entries from the Map
+      // Expect location to be in the format of `[from].[len]`
+      // eg `0.10` will return the first 10 entries`
+      // The response will end in a number, that number should be provided as from to get the next entries
+      // (that number is random for all intents and purposes), therefore to get nth entry, you need to get all the entries before too
+      // The response will be of the following format
+      // `[Location]\0[Redirection]\n...[Location]\0[Redirection]\n[NextKey]`
 
-    return responseWriter.writeMapIterator(&mapIterator, len);
+      const Headers = parseHeaders(enum{auth}, &headersIterator) catch return responseWriter.writeError(400);
+      if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
+
+      var mapIterator = rmap.map.iterator();
+      var locationSplitIterator = std.mem.splitScalar(u8, location, '.');
+
+      const fromStr = locationSplitIterator.next() orelse return responseWriter.writeError(400);
+      const from = std.fmt.parseInt(u32, fromStr, 10) catch return responseWriter.writeError(400);
+
+      const lenStr = locationSplitIterator.next() orelse return responseWriter.writeError(400);
+      const len = std.fmt.parseInt(u32, lenStr, 10) catch return responseWriter.writeError(400);
+
+      if (from >= rmap.map.capacity()) return responseWriter.writeError(404);
+      mapIterator.index = from;
+
+      return responseWriter.writeMapIterator(&mapIterator, len);
+    },
+    else => {},
   }
 
   return responseWriter.writeError(404);
 }
+
+test { std.testing.refAllDeclsRecursive(@This()); }
 

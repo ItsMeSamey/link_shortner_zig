@@ -1,5 +1,3 @@
-test { std.testing.refAllDeclsRecursive(@This()); }
-
 const std = @import("std");
 const Kvp = struct { @"0": []const u8, @"1": []const u8 };
 

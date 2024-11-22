@@ -24,6 +24,9 @@ const Key = struct {
   pub fn dest(self: *const @This()) []const u8 {
     return self.data[self.keyLen..][0..self.valLen];
   }
+  pub fn dataSlice(self: *const @This()) []const u8 {
+    return self.data[0..@as(usize, self.keyLen) + @as(usize, self.valLen)];
+  }
 
   pub fn init(allocator: std.mem.Allocator, loc: []const u8, dst: []const u8, deathat: u32) !Key {
     const data = try allocator.alloc(u8, loc.len + dst.len);
@@ -112,14 +115,17 @@ pub fn add(self: *ReidrectionMap, location: []const u8, dest: []const u8, deatha
 }
 
 pub fn lookup(self: *ReidrectionMap, location: []const u8) ?*Key {
-  return self.map.getKeyPtr(.{ .data = location.ptr, .deathat = undefined, .keyLen = @intCast(location.len), .valLen = undefined, });
+  return self.map.getKeyPtr(.{ .data = location.ptr, .deathat = undefined, .keyLen = @intCast(location.len), .valLen = undefined });
 }
 
-pub fn remove(self: *ReidrectionMap, location: []const u8) void {
-  if (self.map.getKeyPtr(location)) |kptr| {
-    self.map.allocator.free(kptr);
+pub fn remove(self: *ReidrectionMap, location: []const u8) bool {
+  if (self.map.getKeyPtr(.{ .data = location.ptr, .deathat = undefined, .keyLen = @intCast(location.len), .valLen = undefined })) |kptr| {
+    self.map.allocator.free(kptr.dataSlice());
     self.map.removeByPtr(kptr);
+    return true;
   }
+
+  return false;
 }
 
 pub fn deinit(self: *ReidrectionMap) void {
