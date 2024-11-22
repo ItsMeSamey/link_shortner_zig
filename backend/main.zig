@@ -57,7 +57,6 @@ const Server = struct {
       _ = linux.close(conn.client);
     }
 
-
     fn writer(client_self: *const @This()) std.io.AnyWriter {
       return .{
         .context = @ptrCast(client_self),
