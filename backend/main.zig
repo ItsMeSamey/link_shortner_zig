@@ -61,7 +61,7 @@ fn zeroLengthNormalRequest(input: []u8, responseWriter: ResponseWriter) !void {
   switch (@as(u32, @bitCast(input[0..4].*))) {
     @as(u32, @bitCast(@as([4]u8, "OPTI".*))) => {
       // TODO: Send cors response
-      return responseWriter.writer.writeAll("");
+      return responseWriter.writer.writeAll("HTTP/1.1 200\r\nAccess-Control-Allow-Origin:*\r\nAccess-Control-Allow-Methods:GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers:Authorization\r\n\r\n");
     },
     @as(u32, @bitCast(@as([4]u8, "GET ".*))) => {
       // Server the admin panel page

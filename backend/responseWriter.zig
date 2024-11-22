@@ -5,19 +5,19 @@ const ReidrectionMap = @import("redirectionMap.zig");
 writer: std.io.AnyWriter,
 
 pub fn writeRedirection(self: *const @This(), redirection: []const u8) !void {
-  try std.fmt.format(self.writer, "HTTP/1.1 302\r\nConnection:close\r\nLocation:{s}\r\n\r\n", .{ redirection });
+  try std.fmt.format(self.writer, "HTTP/1.1 302\r\nAccess-Control-Allow-Origin:*\r\nConnection:close\r\nLocation:{s}\r\n\r\n", .{ redirection });
 }
 
 pub fn writeError(self: *const @This(), code: u16) !void {
-  try std.fmt.format(self.writer, "HTTP/1.1 {d}\r\n\r\nConnection:close\r\n\r\n", .{ code });
+  try std.fmt.format(self.writer, "HTTP/1.1 {d}\r\nAccess-Control-Allow-Origin:*\r\nConnection:close\r\n\r\n", .{ code });
 }
 
 pub fn writeString(self: *const @This(), data: []const u8 ) !void {
-  try std.fmt.format(self.writer, "HTTP/1.1 200\r\nContent-Length:{d}\r\n\r\n{s}", .{ data.len, data });
+  try std.fmt.format(self.writer, "HTTP/1.1 200\r\nAccess-Control-Allow-Origin:*\r\nContent-Length:{d}\r\n\r\n{s}", .{ data.len, data });
 }
 
 pub fn writeMapIterator(self: *const @This(), iter: *ReidrectionMap.Map.Iterator, count: u32) !void {
-  try std.fmt.format(self.writer, "HTTP/1.1 200\r\nTransfer-Encoding:chunked\r\n\r\n", .{});
+  try std.fmt.format(self.writer, "HTTP/1.1 200\r\nAccess-Control-Allow-Origin:*\r\nTransfer-Encoding:chunked\r\n\r\n", .{});
   var done: u32 = 0;
 
   while (iter.next()) |val| {
