@@ -1,23 +1,6 @@
 .zig-cache
 .env
 
-# Build files
-*.tsbuildinfo
-dist
-
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist-ssr
-*.local
-
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -29,7 +12,24 @@ dist-ssr
 *.sln
 *.sw?
 
-# Package lock files
-package-lock.json
-bun.lockb
+# Js files
+frontend/node_modules
+frontend/dist-ssr
+frontend/*.local
+frontend/package-lock.json
+frontend/bun.lockb
+frontend/.vite
+
+# Build files
+frontend/dist
+*.tsbuildinfo
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
