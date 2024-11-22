@@ -216,13 +216,13 @@ const Response = union(enum) {
   // pointer (64) + usize (64) = 128 bits
   html: []const u8,
   // 8 + 120 = 128 bits
-  shortString: packed struct {
+  shortString: struct {
     len: u8,
     data: [15]u8,
   },
   
   // 96 + 32 = 128 bits
-  mapIterator: packed struct {
+  mapIterator: struct {
     // 64 + 32 bits (has a pointer to map), and count (u32)
     iter: ReidrectionMap.Map.Iterator,
     // 32 bits
@@ -233,7 +233,7 @@ const Response = union(enum) {
     switch (self.*) {
       .redirection => |redirection| try std.fmt.format(writer, "HTTP/1.1 302\r\nConnection:close\r\nLocation:{s}\r\n\r\n", .{ redirection }),
       .html => |html| try std.fmt.format(writer, "HTTP/1.1 200\r\nContent-Length:{d}\r\n\r\n{s}", .{ html.len, html }),
-      .@"error" => |code| try std.fmt.format(writer, "HTTP/1.1 {d}\r\nConnection:close\r\n\r\n", .{ code }),
+      .@"error" => |code| try std.fmt.format(writer, "HTTP/1.1 {d}\r\n\r\nConnection:close\r\n\r\n", .{ code }),
       .shortString => |shortString| try std.fmt.format(writer, "HTTP/1.1 200\r\nContent-Length:{d}\r\n\r\n{s}", .{ shortString.len, shortString.data[0..shortString.len] }),
       .mapIterator => |*iter| {
         try std.fmt.format(writer, "HTTP/1.1 200\r\nTransfer-Encoding:chunked\r\n\r\n", .{});
@@ -247,7 +247,7 @@ const Response = union(enum) {
         }
 
         var buf: [12]u8 = undefined;
-        const len = std.fmt.formatIntBuf(buf[0..], iter.iter.index, 10, .lower, .{}) catch unreachable;
+        const len = std.fmt.formatIntBuf(buf[0..], iter.iter.index, 10, .lower, .{});
         try std.fmt.format(writer, "{x}\r\n{s}\r\n", .{len, buf[0..len]});
 
         try std.fmt.format(writer, "0\r\n\r\n", .{});
@@ -356,8 +356,8 @@ fn getResponse(input: []u8) Response {
     if(location.len == 0) {
       if (@as(u32, @bitCast(input[0..4].*)) == @as(u32, @bitCast(@as([4]u8, "GET ".*)))) {
         // GET request
-        return .{ .html = "<html><body><h1>Hello, world!</h1></body></html>" };
-        // return .{ .html = @embedFile("../frontend/dist/index.html"), };
+        // return .{ .html = "<html><body><h1>Hello, world!</h1></body></html>" };
+        return .{ .html = @embedFile("./dist/index.html"), };
       } else if (@as(u32, @bitCast(input[0..4].*)) == @as(u32, @bitCast(@as([4]u8, "POST".*)))) {
         //Verify auth header
         var headersIterator = std.mem.tokenizeAny(u8, input, "\r\n");
@@ -400,7 +400,7 @@ fn getResponse(input: []u8) Response {
     var mapIterator = rmap.map.iterator();
     var locationSplitIterator = std.mem.splitScalar(u8, location, ' ');
     const from = std.fmt.parseInt(u32, locationSplitIterator.next() orelse return .{ .@"error" = 400 }, 10) catch return .{ .@"error" = 400 };
-    const len = locationSplitIterator.next() orelse return .{ .@"error" = 400 };
+    const len = std.fmt.parseInt(u32, locationSplitIterator.next() orelse return .{ .@"error" = 400 }, 10) catch return .{ .@"error" = 400 };
 
     if (from >= rmap.map.capacity()) return .{ .@"error" = 404 };
     mapIterator.index = from;
@@ -442,7 +442,8 @@ pub fn main() !void {
 
     defer conn.close();
 
-    getResponse(conn.request).send(conn.writer()) catch |e| {
+    var response = getResponse(conn.request);
+    response.send(conn.writer()) catch |e| {
       std.debug.print("error: {s}\n", .{ @errorName(e) });
     };
   }
