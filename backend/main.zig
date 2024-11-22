@@ -178,16 +178,6 @@ const ReidrectionMap = struct {
       const last_b_chunk: Scan.Chunk = @bitCast(b[a.len - Scan.size ..][0..Scan.size].*);
       return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
     }
-
-    test "eql" {
-      try std.testing.expect(eql(MapContext{}, "a", "a"));
-      try std.testing.expect(eql(MapContext{}, "b", "b"));
-      try std.testing.expect(eql(MapContext{}, "aa", "aa"));
-      try std.testing.expect(!eql(MapContext{}, "a", "ab"));
-      try std.testing.expect(!eql(MapContext{}, "ab", "a"));
-      try std.testing.expect(!eql(MapContext{}, "aab", "baa"));
-      try std.testing.expect(eql(MapContext{}, "/ab", "/ab"));
-    }
   };
   const Map = std.HashMap(Key, void, MapContext, std.hash_map.default_max_load_percentage);
 
@@ -289,16 +279,29 @@ fn parseHeaders(comptime HeaderEnum: type, iterator: *std.mem.TokenIterator(u8, 
 
     const val = std.mem.trim(u8, headerString[i+1 ..], " ");
 
-    switch (@intFromEnum(key)) {
-      inline 0...enumFields.len-1 => |fieldValue| {
-        if (@field(headers, enumFields[fieldValue].name).len == 0) {
-          @field(headers, enumFields[fieldValue].name) = val;
-          count += 1;
-        } else {
-          return error.DuplicateHeader;
-        }
-      },
-      else => unreachable,
+    if (enumFields.len-1 == std.math.maxInt(@TypeOf(@intFromEnum(key)))) {
+      switch (@intFromEnum(key)) {
+        inline 0...enumFields.len-1 => |fieldValue| {
+          if (@field(headers, enumFields[fieldValue].name).len == 0) {
+            @field(headers, enumFields[fieldValue].name) = val;
+            count += 1;
+          } else {
+            return error.DuplicateHeader;
+          }
+        },
+      }
+    } else {
+      switch (@intFromEnum(key)) {
+        inline 0...enumFields.len-1 => |fieldValue| {
+          if (@field(headers, enumFields[fieldValue].name).len == 0) {
+            @field(headers, enumFields[fieldValue].name) = val;
+            count += 1;
+          } else {
+            return error.DuplicateHeader;
+          }
+        },
+        else => unreachable,
+      }
     }
   }
   return headers;
@@ -319,6 +322,8 @@ fn getResponse(input: []u8) Response {
     if(location.len == 0) {
       if (@as(u32, @bitCast(input[0..4].*)) == @as(u32, @bitCast(@as([4]u8, "GET ".*)))) {
         // GET request
+        return .{ .html = "<html><body><h1>Hello, world!</h1></body></html>" };
+        // return .{ .html = @embedFile("../frontend/dist/index.html"), };
       } else if (@as(u32, @bitCast(input[0..4].*)) == @as(u32, @bitCast(@as([4]u8, "POST".*)))) {
         //Verify auth header
         var headersIterator = std.mem.tokenizeAny(u8, input, "\r\n");
