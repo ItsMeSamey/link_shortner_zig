@@ -1,9 +1,9 @@
-const std = @import("std");
+test { std.testing.refAllDeclsRecursive(@This()); }
 
+const std = @import("std");
 const Kvp = struct { @"0": []const u8, @"1": []const u8 };
 
-
-pub fn loadKvpComptime(file: []const u8) std.StaticStringMap([]const u8) {
+pub fn loadKvpComptime(comptime file: []const u8) std.StaticStringMap([]const u8) {
   @setEvalBranchQuota(10_000);
   var it = std.mem.tokenizeAny(u8, file, "\r\n");
 
@@ -47,14 +47,13 @@ fn unescapeString(result: []u8, val: []const u8) ![]const u8 {
   switch (val[0]) {
     inline '"', '\'', '`' => |escapeChar| {
       const strippedVal = val[1..val.len - 1];
-      var idx = 0;
-      var resultIdx = 0;
+      var idx: usize = 0;
+      var resultIdx: usize = 0;
       while (idx < strippedVal.len - 1) {
         if (strippedVal[idx] == escapeChar) {
           logFn("Invalid escape sequence {s} in --> {s} <--", .{ strippedVal[idx .. idx + 1], val });
           return error.InvalidString;
         } else if (strippedVal[idx] == '\\') {
-          idx += 2;
           switch (strippedVal[idx + 1]) {
             'n' => result[resultIdx] = '\n',
             'r' => result[resultIdx] = '\r',
@@ -65,17 +64,51 @@ fn unescapeString(result: []u8, val: []const u8) ![]const u8 {
               logFn("Unexpected escape sequence {s} in --> {s} <--", .{ strippedVal[idx .. idx + 1], val });
             },
           }
+          idx += 2;
         } else {
-          idx += 1;
           result[resultIdx] = strippedVal[idx];
+          idx += 1;
         }
         resultIdx += 1;
       }
 
+      if (idx == strippedVal.len - 1) {
+        if (strippedVal[idx] == '\\' or strippedVal[idx] == escapeChar) {
+          logFn("Invalid terminal character {s} in --> {s} <--, string cant end with {s}", .{ strippedVal[idx .. idx + 1], val, if (strippedVal[idx] == '\\') "a \\ (backslash)" else "a the quote (" ++ [_]u8{escapeChar} ++ ")" });
+          return error.InvalidString;
+        }
+        result[resultIdx] = strippedVal[idx];
+        resultIdx += 1;
+      }
       return result[0..resultIdx];
     },
     else => unreachable,
   }
   unreachable;
+}
+
+test "unescapeString" {
+  var buffer: [100]u8 = undefined;
+  const testCases = [_][2][]const u8{
+    .{" \\ ", " \\ "},
+    .{" \\ ", "\" \\\\ \""},
+    .{" \\ ", "' \\\\ '"},
+    .{" \\ ", "` \\\\ `"},
+    .{" \\n ", " \\n "},
+    .{" \\r ", " \\r "},
+    .{" \\t ", " \\t "},
+    .{" \\\\ ", " \\\\ "},
+    .{" \n ", "' \\n '"},
+    .{" \r ", "' \\r '"},
+    .{" \t ", "' \\t '"},
+    .{" \\ ", "' \\\\ '"},
+    .{" '` ", "\" '` \""},
+    .{" `\" ", "' `\" '"},
+    .{" '\" ", "` '\" `"},
+  };
+
+  for (testCases) |testCase| {
+    try std.testing.expectEqualStrings(testCase[0], try unescapeString(buffer[0..], testCase[1]));
+  }
 }
 

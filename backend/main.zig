@@ -2,6 +2,7 @@ test { std.testing.refAllDeclsRecursive(@This()); }
 
 const std = @import("std");
 const linux = std.os.linux;
+const TagType = @TypeOf(.enum_literal);
 
 // The server struct
 const Server = struct {
@@ -85,26 +86,52 @@ const Server = struct {
 };
 
 // The value struct with redirection and timeout
-const Value = struct {
-  // The redirect destination
-  dest: []const u8,
+const Key = struct {
+  // location string followed by the dest string
+  data: [*] const u8,
   // Time (in seconds) after which an entry must die
   deathat: u32,
+  // Length of the location string
+  keyLen: u16,
+  // Length of the dest string
+  valLen: u16,
+
+  pub fn location(self: *const @This()) []const u8 {
+    return self.data[0..self.keyLen];
+  }
+  pub fn dest(self: *const @This()) []const u8 {
+    return self.data[self.keyLen..][0..self.valLen];
+  }
+
+  pub fn init(allocator: std.mem.Allocator, loc: []const u8, dst: []const u8, deathat: u32) !Key {
+    const data = try allocator.alloc(u8, loc.len + dst.len);
+    @memcpy(data[0..loc.len], loc);
+    @memcpy(data[loc.len..], dst);
+    return .{
+      .data = data.ptr,
+      .deathat = deathat,
+      .keyLen = @intCast(loc.len),
+      .valLen = @intCast(dst.len),
+    };
+  }
 };
 
 const ReidrectionMap = struct {
   map: Map,
 
-  const Map = std.HashMap([]const u8, Value, struct {
-    pub fn hash(_: @This(), key: []const u8) u64 {
+  const MapContext = struct {
+    pub fn hash(_: @This(), key: Key) u64 {
       var retval: u64 = 0;
-      for (0.., key) |i, c| {
-        retval = (retval << @intCast(i&7)) ^ (retval >> @intCast(64 ^ (i&63)));
+      for (0.., key.location()) |i, c| {
+        retval = (retval << @intCast(i&7)) ^ (retval >> @intCast(32 ^ (i&31)));
         retval ^= c;
       }
       return retval;
     }
-    pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+    pub fn eql(_: @This(), l: Key, r: Key) bool {
+      var a = l.location();
+      var b = r.location();
+      if (true) return std.mem.eql(u8, a, b);
       if (a.len != b.len) return false;
 
       if (a.len <= 16) {
@@ -152,7 +179,18 @@ const ReidrectionMap = struct {
       const last_b_chunk: Scan.Chunk = @bitCast(b[a.len - Scan.size ..][0..Scan.size].*);
       return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
     }
-  }, std.hash_map.default_max_load_percentage);
+
+    test "eql" {
+      try std.testing.expect(eql(MapContext{}, "a", "a"));
+      try std.testing.expect(eql(MapContext{}, "b", "b"));
+      try std.testing.expect(eql(MapContext{}, "aa", "aa"));
+      try std.testing.expect(!eql(MapContext{}, "a", "ab"));
+      try std.testing.expect(!eql(MapContext{}, "ab", "a"));
+      try std.testing.expect(!eql(MapContext{}, "aab", "baa"));
+      try std.testing.expect(eql(MapContext{}, "/ab", "/ab"));
+    }
+  };
+  const Map = std.HashMap(Key, void, MapContext, std.hash_map.default_max_load_percentage);
 
   pub fn init(allocator: std.mem.Allocator) ReidrectionMap {
     return .{
@@ -161,24 +199,145 @@ const ReidrectionMap = struct {
   }
 
   pub fn add(self: *ReidrectionMap, location: []const u8, dest: []const u8, deathat: u32) !void {
-    return self.map.put(location, .{
-      .dest = dest,
-      .deathat = deathat,
-    });
+    return self.map.put(try Key.init(self.map.allocator, location, dest, deathat), {});
   }
 
-  pub fn lookup(self: *ReidrectionMap, location: []const u8) ?[]const u8 {
-    return if (self.map.get(location)) |v| v.dest else null;
+  pub fn lookup(self: *ReidrectionMap, location: []const u8) ?*Key {
+    return self.map.getKeyPtr(.{ .data = location.ptr, .deathat = undefined, .keyLen = @intCast(location.len), .valLen = undefined, });
   }
 
   pub fn remove(self: *ReidrectionMap, location: []const u8) void {
-    _ = self.map.remove(location);
+    if (self.map.getKeyPtr(location)) |kptr| {
+      self.map.allocator.free(kptr);
+      self.map.removeByPtr(kptr);
+    }
   }
 
   pub fn deinit(self: *ReidrectionMap) void {
+    for (self.map.keys()) |key| self.map.allocator.free(key);
     self.map.deinit();
   }
 };
+
+const Response = union(enum) {
+  redirection: []const u8,
+  @"error": u16,
+  html: []const u8,
+
+  fn send(self: *const @This(), writer: std.io.AnyWriter) !void {
+    switch (self.*) {
+      .redirection => |redirection| try std.fmt.format(writer, "HTTP/1.1 302\r\nConnection:close\r\nLocation:{s}\r\n\r\n", .{ redirection }),
+      .html => |html| try std.fmt.format(writer, "HTTP/1.1 200\r\nContent-Length:{d}\r\n\r\n{s}", .{ html.len, html }),
+      .@"error" => |code| try std.fmt.format(writer, "HTTP/1.1 {d}\r\nConnection:close\r\n\r\n", .{ code }),
+    }
+  }
+};
+
+fn HeadersStructFromFieldNames(comptime HeaderEnum: type) type {
+  const enumFields = @typeInfo(HeaderEnum).@"enum".fields;
+  comptime var fields: [enumFields.len]std.builtin.Type.StructField = undefined;
+
+  comptime {
+    for (enumFields, 0..) |field, i| {
+      std.debug.assert(field.value == i);
+      if (field.value > enumFields.len-1) {
+        @compileError("Field " ++ field.name ++ " is out of bounds");
+      }
+    }
+  }
+
+  inline for (0.., enumFields) |i, field| {
+    comptime var newName: [field.name.len:0]u8 = undefined;
+    for (field.name, 0..) |char, idx| newName[idx] = std.ascii.toLower(char);
+    
+    fields[i] = .{
+      .name = &newName,
+      .type = []const u8,
+      .default_value = null,
+      .is_comptime = false,
+      .alignment = 0,
+    };
+  }
+
+  const structInfo: std.builtin.Type.Struct = .{
+    .layout = .auto,
+    .backing_integer = null,
+    .fields = &fields,
+    .decls = &[_]std.builtin.Type.Declaration{},
+    .is_tuple = false,
+  };
+  return @Type(.{ .@"struct" = structInfo });
+}
+
+// iterator MUST be over a mutable slice, or the result is undefined
+fn parseHeaders(comptime HeaderEnum: type, iterator: *std.mem.TokenIterator(u8, .any)) !HeadersStructFromFieldNames(HeaderEnum) {
+  const HeaderType = HeadersStructFromFieldNames(HeaderEnum);
+  const enumFields = @typeInfo(HeaderEnum).@"enum".fields;
+  var headers: HeaderType = undefined;
+
+  // Init to 0 length strings
+  inline for (enumFields) |field| @field(headers, field.name) = "";
+
+  var count: usize = 0;
+  while (count < @typeInfo(HeaderEnum).@"enum".fields.len) {
+    const headerString = iterator.next() orelse return error.MissingHeaders;
+
+    const i = std.mem.indexOfScalar(u8, headerString, ':') orelse return error.BadRequest;
+
+    // This is faster than direct inline for loop as stringToEnum uses a hash_map
+    const keyString = std.mem.trim(u8, std.ascii.lowerString(@constCast(headerString[0..i]), headerString[0..i]), " ");
+    const key = std.meta.stringToEnum(HeaderEnum, keyString) orelse continue;
+
+    const val = std.mem.trim(u8, headerString[i+1 ..], " ");
+
+    switch (@intFromEnum(key)) {
+      inline 0...enumFields.len-1 => |fieldValue| {
+        if (@field(headers, enumFields[fieldValue].name).len == 0) {
+          @field(headers, enumFields[fieldValue].name) = val;
+          count += 1;
+        } else {
+          return error.DuplicateHeader;
+        }
+      },
+      else => unreachable,
+    }
+  }
+  return headers;
+}
+
+// Get then redirection for the request
+fn getResponse(input: []u8) Response {
+  if (input.len <= 14) return .{ .@"error" = 400 };
+
+  // All the normal requests
+  if (input[0] != '~' or input[1] != '~' or input[2] != '~') {
+    var end = 5 + (std.mem.indexOfScalar(u8, input[5..], ' ') orelse return .{ .@"error" = 400 });
+    if (input[end-1] == '/') end -= 1;
+    const location = input[5..end];
+
+    if(location.len == 0) {
+    }
+
+    if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) return  .{ .@"error" = 400 };
+    return .{ .redirection = (rmap.lookup(location) orelse return .{ .@"error" = 404 }).dest() };
+  }
+
+  // Special Admin requests
+  var headersIterator = std.mem.tokenizeAny(u8, input, "\r\n");
+  const first = headersIterator.next() orelse return .{ .@"error" = 400 };
+  const location = first["~~~ /".len..first.len-" HTTP/1.1".len];
+
+  if (first[3] == ' ') {
+    const Headers = parseHeaders(enum{auth, dest, death}, &headersIterator) catch return .{ .@"error" = 400 };
+    if (!std.mem.eql(u8, Headers.auth, auth)) return .{ .@"error" = 401 };
+
+    const death = std.fmt.parseInt(u32, Headers.death, 10) catch return .{ .@"error" = 400 };
+    rmap.add(location, Headers.dest, death) catch return .{ .@"error" = 500 };
+  }
+
+  return .{ .@"error" = 200 };
+}
+
 
 var server: Server = undefined;
 var rmap: ReidrectionMap = undefined;
@@ -209,105 +368,5 @@ pub fn main() !void {
       std.debug.print("error: {s}\n", .{ @errorName(e) });
     };
   }
-}
-
-const Response = union(enum) {
-  redirection: []const u8,
-  @"error": u16,
-  html: []const u8,
-
-  fn send(self: *const @This(), writer: std.io.AnyWriter) !void {
-    switch (self.*) {
-      .redirection => |redirection| try std.fmt.format(writer, "HTTP/1.1 302\r\nConnection:close\r\nLocation:{s}\r\n\r\n", .{ redirection }),
-      .html => |html| try std.fmt.format(writer, "HTTP/1.1 200\r\nContent-Length:{d}\r\n\r\n{s}", .{ html.len, html }),
-      .@"error" => |code| try std.fmt.format(writer, "HTTP/1.1 {d}\r\nConnection:close\r\n\r\n", .{ code }),
-    }
-  }
-};
-
-fn HeadersStructFromFieldNames(comptime headerNames: []const []const u8) type {
-  comptime var fields: [headerNames.len]std.builtin.Type.StructField = undefined;
-  inline for (0.., headerNames) |i, name| {
-    comptime var newName: [name.len]u8 = undefined;
-    std.ascii.lowerString(name, newName[0..]);
-
-    fields[i] = .{
-      .name = headerNames[i],
-      .type = []const u8,
-      .default_value = "",
-      .is_comptime = false,
-      .alignment = 0,
-    };
-  }
-
-  return @Type(std.builtin.Type{
-    .@"struct" = .{
-      .layout = .auto,
-      .fields = fields,
-      .decls = &[_]std.builtin.Type.Declaration{},
-      .is_tuple = false,
-    }
-  });
-}
-
-fn parseHeaders(comptime headerNames: []const []const u8, iterator: std.mem.TokenIterator(u8, .any)) !HeadersStructFromFieldNames(headerNames) {
-  const HeaderType = HeadersStructFromFieldNames(headerNames);
-  const HeaderEnum = std.meta.FieldEnum(HeaderType);
-  var headers: HeaderType = undefined;
-
-  var count = 0;
-  while (count < headerNames.len) {
-    const header = iterator.next() orelse return error.MissingHeaders!headers;
-
-    const i = std.mem.indexOfScalar(u8, header, ':') orelse return error.BadRequest;
-
-    // This is faster than direct inline for loop as stringToEnum uses a hash_map
-    const keyString = std.mem.trim(u8, std.ascii.lowerString(header[0..i], header[0..i]), " ");
-    const key = std.meta.stringToEnum(HeaderEnum, keyString) orelse continue;
-
-    count += 1;
-    const val = std.mem.trim(u8, header[i+1 ..], " ");
-
-    inline for (@typeInfo(HeaderEnum).Enum.fields) |field| {
-      if (@call(std.builtin.CallModifier.compile_time, std.mem.eql, .{ u8, field.name, @tagName(key) })) {
-        @field(headers, field.name) = val;
-        break;
-      }
-    }
-  }
-  return headers;
-}
-
-// Get then redirection for the request
-fn getResponse(input: []u8) Response {
-  if (input.len < 14) return .{ .@"error" = 400 };
-
-  // All the normal requests
-  if (input[0] != '~' or input[1] != '~' or input[2] != '~') {
-    var end = 4 + (std.mem.indexOfScalar(u8, input[4..], ' ') orelse return .{ .@"error" = 400 });
-    if (input[end-1] == '/') end -= 1;
-    const location = input[4..end];
-
-    if(location.len == 0) {
-    }
-
-    if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) return  .{ .@"error" = 400 };
-    return .{ .redirection = rmap.lookup(location) orelse return .{ .@"error" = 404 } };
-  }
-
-  // Special Admin requests
-  var headersIterator = std.mem.tokenizeAny(u8, input, "\r\n");
-  const first = headersIterator.next() orelse return .{ .@"error" = 400 };
-
-  if (first[4] == ' ') {
-    const Headers = parseHeaders(.{"auth", "dest", "death"}, headersIterator);
-    if (!std.mem.eql(u8, Headers.auth, auth)) return .{ .@"error" = 401 };
-
-    // const death = std.fmt.parseInt(u32, Headers.deth, 10) catch return .{ .@"error" = 400 };
-    @panic(first["~~~ ".len..first.len-"HTTP/1.1".len]);
-    // rmap.add(first["~~~ ".len..first.len-"HTTP/1.1".len], Headers.dest, death) catch return .{ .@"error" = 500 };
-  }
-
-  return .{ .@"error" = 200 };
 }
 
