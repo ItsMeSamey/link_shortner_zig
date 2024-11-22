@@ -238,8 +238,9 @@ const Response = union(enum) {
       .mapIterator => |*iter| {
         try std.fmt.format(writer, "HTTP/1.1 200\r\nTransfer-Encoding:chunked\r\n\r\n", .{});
         while (iter.iter.next()) |val| {
-          const len = @as(u32, val.key_ptr.keyLen) + @as(u32, val.key_ptr.valLen);
-          try std.fmt.format(writer, "{x}\r\n{s}\r\n", .{len, val.key_ptr.data[0..len]});
+          // 1 for \0 separator, 1 for the extra \n
+          const len = @as(u32, val.key_ptr.keyLen) + 1 + @as(u32, val.key_ptr.valLen) + 1 ;
+          try std.fmt.format(writer, "{x}\r\n{s}\x00{s}\n\r\n", .{len, val.key_ptr.location(), val.key_ptr.dest()});
 
           iter.count -= 1;
           if (iter.count == 0) break;
