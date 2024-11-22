@@ -18,7 +18,7 @@ pub fn loadKvpComptime(comptime file: []const u8) std.StaticStringMap([]const u8
 
     const tempVal = line[i+1 ..];
     comptime var dataArr: [tempVal.len]u8 = undefined;
-    const val = unescapeString(dataArr[0..], ) catch |e| { @compileError(@errorName(e)); };
+    const val = unescapeString(dataArr[0..], tempVal) catch |e| { @compileError(@errorName(e)); };
 
     if (key.len == 0 or val.len == 0) continue;
 

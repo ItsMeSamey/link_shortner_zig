@@ -304,34 +304,53 @@ fn parseHeaders(comptime HeaderEnum: type, iterator: *std.mem.TokenIterator(u8, 
   return headers;
 }
 
+
 // Get then redirection for the request
 fn getResponse(input: []u8) Response {
   if (input.len <= 14) return .{ .@"error" = 400 };
 
   // All the normal requests
   if (input[0] != '~' or input[1] != '~' or input[2] != '~') {
-    var end = 5 + (std.mem.indexOfScalar(u8, input[5..], ' ') orelse return .{ .@"error" = 400 });
-    if (input[end-1] == '/') end -= 1;
-    const location = input[5..end];
+    var location = input[5..];
+    location.len = std.mem.indexOfScalar(u8, input[5..], ' ') orelse return .{ .@"error" = 400 };
+    if (location.len > 0 and location[location.len - 1] == '/') location.len -= 1;
 
+    // The requests has no sub-path
     if(location.len == 0) {
+      if (@as(u32, @bitCast(input[0..4].*)) == @as(u32, @bitCast(@as([4]u8, "GET ".*)))) {
+        // GET request
+      } else if (@as(u32, @bitCast(input[0..4].*)) == @as(u32, @bitCast(@as([4]u8, "POST".*)))) {
+        //Verify auth header
+        var headersIterator = std.mem.tokenizeAny(u8, input, "\r\n");
+        _ = headersIterator.next() orelse return .{ .@"error" = 400 };
+        const Headers = parseHeaders(enum{auth}, &headersIterator) catch return .{ .@"error" = 400 };
+        if (!std.mem.eql(u8, Headers.auth, auth)) return .{ .@"error" = 401 };
+        return .{ .@"error" = 200 };
+      }
+
+      // Unsupported request
+      return .{ .@"error" = 404 };
     }
 
-    if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) return  .{ .@"error" = 400 };
+    if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) return  .{ .@"error" = 404 };
     return .{ .redirection = (rmap.lookup(location) orelse return .{ .@"error" = 404 }).dest() };
   }
 
   // Special Admin requests
   var headersIterator = std.mem.tokenizeAny(u8, input, "\r\n");
   const first = headersIterator.next() orelse return .{ .@"error" = 400 };
-  const location = first["~~~ /".len..first.len-" HTTP/1.1".len];
+  var location = first[std.mem.indexOfScalar(u8, first, ' ') orelse return .{ .@"error" = 400 } ..];
+  location.len = std.mem.indexOfScalar(u8, location, ' ') orelse return .{ .@"error" = 400 };
+  if (location.len > 0 and location[location.len - 1] == '/') location.len -= 1;
 
-  if (first[3] == ' ') {
+  if (first[3] == ' ' and location.len > 0) {
     const Headers = parseHeaders(enum{auth, dest, death}, &headersIterator) catch return .{ .@"error" = 400 };
     if (!std.mem.eql(u8, Headers.auth, auth)) return .{ .@"error" = 401 };
 
     const death = std.fmt.parseInt(u32, Headers.death, 10) catch return .{ .@"error" = 400 };
     rmap.add(location, Headers.dest, death) catch return .{ .@"error" = 500 };
+  } else if (first[3] == ' ' and location.len == 0) {
+
   }
 
   return .{ .@"error" = 200 };
