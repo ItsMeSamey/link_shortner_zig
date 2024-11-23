@@ -14,28 +14,25 @@ pub fn GetStaticCircularOverwritingList(comptime usizeCapacity: usize, comptime 
 
   return struct {
     buf: [capacity]T = undefined,
+    // One after the last inserted entry, but is never out of bounds due to wraparound
     end: capacityType = 0,
     isFull: bool = false,
 
     const Self = @This();
 
     pub fn getOldest(self: *Self) ?*T {
-      if (self.end == 0) {
-        if (self.isFull) return null;
-        return &self.buf[capacity-1];
-      }
-      return &self.buf[self.end-1];
+      if (self.end == 0 and !self.isFull) return null;
+      if (!self.isFull) return &self.buf[0];
+      return &self.buf[self.end];
     }
 
     pub fn getNewest(self: *Self) ?*T {
-      if (self.isFull) {
-        @setEvalBranchQuota(1024);
-        const nIndex = self.end + 1;
-        if (nIndex == capacity) return &self.buf[0];
-        return &self.buf[nIndex];
+      if (!self.isFull) {
+        if (self.end == 0) return null;
+        return &self.buf[self.end - 1];
       }
-      if (self.end == 0) return null;
-      return &self.buf[0];
+      if (self.end == 0) return &self.buf[capacity - 1];
+      return &self.buf[self.end - 1];
     }
     
     pub fn push(self: *Self, value: T) ?T {
@@ -63,28 +60,34 @@ pub fn GetStaticCircularOverwritingList(comptime usizeCapacity: usize, comptime 
 
         return retval;
       }
+
+      fn nilIterator() Iterator {
+        return .{
+          .list = undefined,
+          .index = 0,
+          .finished = true,
+        };
+      }
     };
 
-    pub fn getIteratorAfter(self: *Self, context: anytype, compareFn: fn (ctx: @TypeOf(context), a: T) std.math.Order) ?Iterator {
-      var beginIndex: capacityType = undefined;
-      if (self.isFull) {
-        if (std.sort.binarySearch(T, self.buf[0..self.end], context, compareFn)) |idx| {
-          beginIndex = @intCast(idx);
-        } else {
-          if (std.sort.binarySearch(T, self.buf[self.end..], context, compareFn)) |idx| {
-            beginIndex = @intCast(idx + self.end + 1);
-          } else {
-            return null;
-          }
-        }
-      } else {
-        beginIndex = @intCast(std.sort.binarySearch(T, self.buf[0..self.end], context, compareFn) orelse return null);
-      }
-
+    pub fn getIteratorAfter(self: *Self, context: anytype, compareFn: fn (ctx: @TypeOf(context), a: T) std.math.Order) Iterator {
+      if (!self.isFull and self.end == 0) return Iterator.nilIterator();
       return .{
         .list = self,
-        .index = beginIndex,
+        .index = init: {
+          if (!self.isFull) break :init @intCast(std.sort.binarySearch(T, self.buf[0..self.end], context, compareFn) orelse return Iterator.nilIterator());
+
+          if (std.sort.binarySearch(T, self.buf[0..self.end], context, compareFn)) |idx| break :init @intCast(idx);
+          if (std.sort.binarySearch(T, self.buf[self.end..], context, compareFn)) |idx| break :init @intCast(idx + self.end + 1);
+
+          return Iterator.nilIterator();
+        }
       };
+    }
+
+    pub fn getBeginningIterator(self: *Self) Iterator {
+      if (!self.isFull and self.end == 0) return Iterator.nilIterator();
+      return .{ .list = self, .index = if (!self.isFull) 0 else self.end };
     }
   };
 }

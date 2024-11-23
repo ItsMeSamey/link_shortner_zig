@@ -1,9 +1,6 @@
-import { createSignal, onCleanup, createEffect, Show, createResource, For, indexArray } from 'solid-js'
-import { addRedirection, deleteRedirection, getRedirectionMapEntries, getModificationsAfterIndex, getRedirectionMapCount, site, ModificationType } from '../utils/fetch'
-import { Table } from '../components/ui/table'
-import { Pagination } from '../components/ui/pagination'
+import { createSignal, createEffect, Show, createResource, For } from 'solid-js'
+import { addRedirection, site, ModificationType, getAllModifications } from '../utils/fetch'
 import { Button } from "../components/ui/button"
-import { AlertDialog } from '../components/ui/alert-dialog'
 
 import {
   Card,
@@ -15,9 +12,8 @@ import {
 } from "../components/ui/card"
 import { TextField, TextFieldInput, TextFieldLabel } from "../components/ui/text-field"
 import { Setter } from 'solid-js'
-import { cn } from '../lib/utils'
-import { Badge } from '../components/ui/badge'
-import { IconArrowRight, IconExternalLink, IconMinus, IconPlus } from '../components/icons'
+import { IconArrowRight, IconCopy, IconExternalLink, IconMinus, IconPlus } from '../components/icons'
+import { Flex } from '../components/ui/flex'
 
 
 function AddRedirection() {
@@ -89,7 +85,7 @@ function AddRedirection() {
             placeholder="/google"
             type="text"
             value={from()}
-            onInput={(e) => setFrom(e.target.nodeValue ?? '') }
+            onInput={(e) => setFrom((e.target as HTMLInputElement).value ?? '') }
           />
         </TextField>
         
@@ -100,7 +96,7 @@ function AddRedirection() {
             placeholder="https://google.com"
             type="text"
             value={to()}
-            onInput={(e) => setTo(e.target.nodeValue ?? '')}
+            onInput={(e) => setTo((e.target as HTMLInputElement).value ?? '')}
           />
         </TextField>
 
@@ -125,7 +121,7 @@ function AddRedirection() {
 }
 
 function ShowHistory() {
-  const [history] = createResource(0, getModificationsAfterIndex)
+  const [history] = createResource(getAllModifications)
   createEffect(() => {
     console.log(history())
   })
@@ -149,12 +145,11 @@ function ShowHistory() {
           </div>
         </div>
     }>
-      <div class="flex flex-col overflow-auto p-4">
+      <div class="flex flex-col overflow-auto">
         <For each={history()!.entries}>
           {(item) => (
-            <button
-              type="button"
-              class="flex flex-col items-start gap-2 rounded-lg border p-3 text-left text-sm transition-all"
+            <span
+              class="flex flex-col items-start gap-2 rounded-lg border p-3 mx-4 my-2 text-left text-sm transition-all"
             >
               <div class="flex w-full flex-col gap-1">
                 <div class="flex items-center">
@@ -162,11 +157,11 @@ function ShowHistory() {
                     <IconPlus class="rounded-full mr-2 bg-green-700" />:
                     <IconMinus class="rounded-full mr-2 bg-red-700" />
                   }
-                  <div class="items-center gap-2 flex p-2 rounded-full hover:bg-accent" onclick={() => window.open(site + item.modification.location, '_blank')}>
+                  <div class="items-center gap-2 flex p-2 rounded-full hover:bg-accent cursor-pointer px-3" onclick={() => window.open(site + item.modification.location, '_blank')}>
                     <div class="font-semibold">{site + item.modification.location}</div>
                   </div>
-                  <IconArrowRight class="mx-1" />
-                  <div class="items-center gap-2 flex p-2 rounded-full hover:bg-accent" onclick={() => window.open(item.modification.dest, '_blank')}>
+                  <IconArrowRight class="mx-1 mr-2" />
+                  <div class="items-center gap-2 flex p-2 rounded-full hover:bg-accent cursor-pointer px-3" onclick={() => window.open(item.modification.dest, '_blank')}>
                     <div class="font-semibold">{item.modification.dest}</div>
                     <IconExternalLink />
                   </div>
@@ -175,35 +170,19 @@ function ShowHistory() {
                       <>Till {new Date(item.modification.deathat).toLocaleString()}</>:
                       <>Deleted (till {new Date(item.modification.deathat).toLocaleString()})</>}
                   </div>
+                  <span
+                    class="p-2 m-2 hover:border-gray-400/25 hover:bg-accent transition border border-gray-400/0 rounded"
+                    onclick={() => navigator.clipboard.writeText(JSON.stringify(item.modification, null, 2))}
+                  >
+                    <IconCopy />
+                  </span>
                 </div>
               </div>
-            </button>
+            </span>
           )}
         </For>
       </div>
     </Show>
-  )
-  return (
-    <For each={history()!.entries}>
-      {entry => <Card class="w-max m-4 w-max-lg flex">
-        <CardHeader>
-          <CardTitle>{entry.modificationType === ModificationType.CREATED ? 'Created' : 'Deleted'} ({entry.index})</CardTitle>
-        </CardHeader>
-        <CardContent>
-            <CardDescription>
-              From: {entry.modification.location}
-            </CardDescription>
-            <CardDescription>
-              To: {entry.modification.dest}
-            </CardDescription>
-            <Show when={entry.modificationType == ModificationType.CREATED}>
-              <CardDescription>
-                Till: {new Date(entry.modification.deathat).toLocaleString()}
-              </CardDescription>
-            </Show>
-          </CardContent>
-        </Card>}
-      </For>
   )
 }
 

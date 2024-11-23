@@ -141,20 +141,8 @@ export interface Modification {
   modification: MapEntry
 }
 
-// Returns all the modification after the given date
-//
-// @throws Error if the server returns an error
-export async function getModificationsAfterIndex(index: number): Promise<{entries: Modification[], oldestIndex: number}> {
-  const response = await fetch(site + String(index), {
-    method: loginData.get()!.method + '3',
-    headers: [
-      ['auth', loginData.get()!.auth],
-    ],
-  })
-
-  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
-  const text = await response.text()
-  if (text.length == 0) throw new Error('Server error, Got Invalid response: ' + text)
+function parseModification(text: string): {entries: Modification[], oldestIndex: number} {
+  if (text.length == 0) return {entries: [], oldestIndex: 0}
 
   const midificationStrings = text.split('\n')
   const oldestIndex = Number(midificationStrings.pop()!)
@@ -176,6 +164,32 @@ export async function getModificationsAfterIndex(index: number): Promise<{entrie
   return { entries: modifications, oldestIndex }
 }
 
+export async function getAllModifications(): Promise<{entries: Modification[], oldestIndex: number}> {
+  const response = await fetch(site, {
+    method: loginData.get()!.method + '3',
+    headers: [
+      ['auth', loginData.get()!.auth],
+    ],
+  })
+
+  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
+  return parseModification(await response.text())
+}
+
+// Returns all the modification after the given date
+//
+// @throws Error if the server returns an error
+export async function getModificationsAfterIndex(index: number): Promise<{entries: Modification[], oldestIndex: number}> {
+  const response = await fetch(site + String(index), {
+    method: loginData.get()!.method + '3',
+    headers: [
+      ['auth', loginData.get()!.auth],
+    ],
+  })
+
+  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
+  return parseModification(await response.text())
+}
 
 (globalThis as any).fetchingFunctions = [
   addRedirection,
