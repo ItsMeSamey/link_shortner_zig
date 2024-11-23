@@ -1,9 +1,22 @@
 const std = @import("std");
 
+modification: CircularOverwritingList,
 map: Map,
 
-
 const ReidrectionMap = @This();
+
+pub const TimestampType = i64;
+pub const ModificationWithTimestamp = struct {
+  timestamp: TimestampType,
+  modification: Modification,
+  
+  const Modification = union(enum) {
+    add: Key,
+    remove: Key,
+  };
+};
+
+pub const CircularOverwritingList = @import("staticCircularOverwritingList.zig").GetStaticCircularOverwritingList(1024, ModificationWithTimestamp);
 
 pub const Map = std.HashMap(Key, void, MapContext, std.hash_map.default_max_load_percentage);
 
@@ -12,7 +25,7 @@ const Key = struct {
   // location string followed by the dest string
   data: [*] const u8,
   // Time (in seconds) after which an entry must die
-  deathat: u32,
+  deathat: TimestampType,
   // Length of the location string
   keyLen: u16,
   // Length of the dest string
@@ -28,7 +41,7 @@ const Key = struct {
     return self.data[0..@as(usize, self.keyLen) + @as(usize, self.valLen)];
   }
 
-  pub fn init(allocator: std.mem.Allocator, loc: []const u8, dst: []const u8, deathat: u32) !Key {
+  pub fn init(allocator: std.mem.Allocator, loc: []const u8, dst: []const u8, deathat: TimestampType) !Key {
     const data = try allocator.alloc(u8, loc.len + dst.len);
     @memcpy(data[0..loc.len], loc);
     @memcpy(data[loc.len..], dst);
@@ -107,11 +120,21 @@ const MapContext = struct {
 pub fn init(allocator: std.mem.Allocator) ReidrectionMap {
   return .{
     .map = Map.init(allocator),
+    .modification = CircularOverwritingList{},
   };
 }
 
-pub fn add(self: *ReidrectionMap, location: []const u8, dest: []const u8, deathat: u32) !void {
-  return self.map.put(try Key.init(self.map.allocator, location, dest, deathat), {});
+pub fn add(self: *ReidrectionMap, location: []const u8, dest: []const u8, deathat: TimestampType) !void {
+  const k = try Key.init(self.map.allocator, location, dest, deathat);
+  const removed = self.modification.push(.{ .timestamp = std.time.timestamp(), .modification = .{ .add = k } });
+  if (removed) |r| {
+    switch (r.modification) {
+      .remove => |v| self.map.allocator.free(v.dataSlice()),
+      else => {},
+    }
+  }
+
+  return self.map.put(k, {});
 }
 
 pub fn lookup(self: *ReidrectionMap, location: []const u8) ?*Key {
@@ -120,6 +143,14 @@ pub fn lookup(self: *ReidrectionMap, location: []const u8) ?*Key {
 
 pub fn remove(self: *ReidrectionMap, location: []const u8) bool {
   if (self.map.getKeyPtr(.{ .data = location.ptr, .deathat = undefined, .keyLen = @intCast(location.len), .valLen = undefined })) |kptr| {
+    const removed = self.modification.push(.{ .timestamp = std.time.timestamp(), .modification = .{ .add = kptr.* } });
+    if (removed) |r| {
+      switch (r.modification) {
+        .remove => |v| self.map.allocator.free(v.dataSlice()),
+        else => {},
+      }
+    }
+
     self.map.allocator.free(kptr.dataSlice());
     self.map.removeByPtr(kptr);
     return true;

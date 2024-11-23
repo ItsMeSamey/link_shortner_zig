@@ -36,20 +36,28 @@ pub fn main() !void {
   }
 }
 
+const allowedMethods = "~~~0,~~~1,~~~2,~~~3,GET,POST,OPTIONS";
+const allowedHeaders = "auth,dest,death";
+const corsResponse = "HTTP/1.1 200\r\nAccess-Control-Allow-Origin:*\r\nAccess-Control-Allow-Methods:" ++ allowedMethods ++ "\r\nAccess-Control-Allow-Headers:" ++ allowedHeaders ++ "\r\nConnection:close\r\n\r\n";
+
 // Get then redirection for the request
 fn sendResponse(input: []u8, responseWriter: ResponseWriter) !void {
   if (input.len <= 14) return responseWriter.writeError(400);
-
   if (input[0] == '~' and input[1] == '~' and input[2] == '~') return adminRequest(input, responseWriter);
 
-  var location = input[5..];
-  location.len = std.mem.indexOfScalar(u8, input[5..], ' ') orelse return responseWriter.writeError(400);
-  if (location.len > 0 and location[location.len - 1] == '/') location.len -= 1;
+  var location = input[2+(std.mem.indexOfScalar(u8, input[0..12], ' ') orelse return responseWriter.writeError(400)) ..];
+  location.len = std.mem.indexOfScalar(u8, location, ' ') orelse return responseWriter.writeError(400);
 
   // The requests has no sub-path
   if(location.len == 0) return zeroLengthNormalRequest(input, responseWriter);
 
-  if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) return responseWriter.writeError(404);
+  if (@as(u32, @bitCast(input[0..4].*)) != @as(u32, @bitCast(@as([4]u8, "GET ".*)))) {
+    if (@as(u32, @bitCast(input[0..4].*)) == @as(u32, @bitCast(@as([4]u8, "OPTI".*)))) {
+      return responseWriter.writer.writeAll(corsResponse);
+    } else {
+      return responseWriter.writeError(404);
+    }
+  }
   return responseWriter.writeRedirection(
     (rmap.lookup(location) orelse return responseWriter.writeError(404)).dest()
   );
@@ -58,8 +66,7 @@ fn sendResponse(input: []u8, responseWriter: ResponseWriter) !void {
 fn zeroLengthNormalRequest(input: []u8, responseWriter: ResponseWriter) !void {
   switch (@as(u32, @bitCast(input[0..4].*))) {
     @as(u32, @bitCast(@as([4]u8, "OPTI".*))) => {
-      // TODO: Send cors response
-      return responseWriter.writer.writeAll("HTTP/1.1 200\r\nAccess-Control-Allow-Origin:*\r\nAccess-Control-Allow-Methods:GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers:Authorization\r\n\r\n");
+      return responseWriter.writer.writeAll(corsResponse);
     },
     @as(u32, @bitCast(@as([4]u8, "GET ".*))) => {
       // Server the admin panel page
@@ -85,11 +92,11 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
   const first = headersIterator.next() orelse return responseWriter.writeError(400);
 
   // Extract the path from first line
-  var location = first[std.mem.indexOfScalar(u8, first, ' ') orelse return responseWriter.writeError(400) ..];
+  var location = first[2+(std.mem.indexOfScalar(u8, first[0..12], ' ') orelse return responseWriter.writeError(400)) ..];
   location.len = std.mem.indexOfScalar(u8, location, ' ') orelse return responseWriter.writeError(400);
   if (location.len > 0 and location[location.len - 1] == '/') location.len -= 1;
 
-  if (location.len == 0) {
+  if (location.len != 0) {
     switch (first[3]) {
       '0' => {
         // Add / Set an entry to the Map
@@ -97,7 +104,7 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
         const Headers = parseHeaders(enum{auth, dest, death}, &headersIterator) catch return responseWriter.writeError(400);
         if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
 
-        const death = std.fmt.parseInt(u32, Headers.death, 10) catch return responseWriter.writeError(400);
+        const death = std.fmt.parseInt(ReidrectionMap.TimestampType, Headers.death, 10) catch return responseWriter.writeError(400);
         rmap.add(location, Headers.dest, death) catch return responseWriter.writeError(500);
 
         return responseWriter.writeError(200);
@@ -110,44 +117,83 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
         // Entry didnt even exist but okk!
         return responseWriter.writeError(202);
       },
+      '2' => {
+        // Get Entries from the Map
+        // Expect location to be in the format of `[from].[len]`
+        // eg `0.10` will return the first 10 entries`
+        // The response will end in a number, that number should be provided as from to get the next entries
+        // (that number is random for all intents and purposes), therefore to get nth entry, you need to get all the entries before too
+        // The response will be of the following format
+        // `[Location]\0[Redirection]\n...[Location]\0[Redirection]\n[NextKey]`
+
+        // Veriy auth header
+        const Headers = parseHeaders(enum{auth}, &headersIterator) catch return responseWriter.writeError(400);
+        if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
+
+        var mapIterator = rmap.map.iterator();
+        var locationSplitIterator = std.mem.splitScalar(u8, location, '.');
+
+        const fromStr = locationSplitIterator.next() orelse return responseWriter.writeError(400);
+        const from = std.fmt.parseInt(u32, fromStr, 10) catch return responseWriter.writeError(400);
+
+        const lenStr = locationSplitIterator.next() orelse return responseWriter.writeError(400);
+        const len = std.fmt.parseInt(u32, lenStr, 10) catch return responseWriter.writeError(400);
+
+        if (from >= rmap.map.capacity()) return responseWriter.writeError(404);
+        mapIterator.index = from;
+
+        return responseWriter.writeMapIterator(&mapIterator, len);
+      },
+      '3' => {
+        // getModificarionsSince
+
+        // Veriy auth header
+        const Headers = parseHeaders(enum{auth}, &headersIterator) catch return responseWriter.writeError(400);
+        if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
+
+        const date = std.fmt.parseInt(ReidrectionMap.TimestampType, location, 10) catch return responseWriter.writeError(400);
+
+        const sortCtx = struct {
+          target: ReidrectionMap.TimestampType,
+
+          fn compareFn(ctx: @This(), a: ReidrectionMap.ModificationWithTimestamp) std.math.Order {
+            return std.math.order(a.timestamp, ctx.target);
+          }
+        };
+
+        var iterator = rmap.modification.getIteratorAfter(sortCtx{ .target = date }, sortCtx.compareFn) orelse return responseWriter.writeError(200);
+        return responseWriter.writeMapModificationIterator(&iterator);
+      },
       else => {},
     }
   }
+
+  // Veriy auth header
+  const Headers = parseHeaders(enum{auth}, &headersIterator) catch return responseWriter.writeError(400);
+  if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
 
   switch (first[3]) {
     '0' => {
       // Return the number of entries in the Map
       // A simple number is returned as body
 
-      var buf: [12]u8 = undefined;
-      const len = std.fmt.formatIntBuf(buf[0..], rmap.map.count(), 10, .lower, .{});
+      var buf: [10]u8 = undefined;
+      const len = std.fmt.formatIntBuf(buf[0..], @as(u32, rmap.map.count()), 10, .lower, .{});
       try responseWriter.writeString(buf[0..len]);
     },
     '1' => {
-      // Get Entries from the Map
-      // Expect location to be in the format of `[from].[len]`
-      // eg `0.10` will return the first 10 entries`
-      // The response will end in a number, that number should be provided as from to get the next entries
-      // (that number is random for all intents and purposes), therefore to get nth entry, you need to get all the entries before too
-      // The response will be of the following format
-      // `[Location]\0[Redirection]\n...[Location]\0[Redirection]\n[NextKey]`
+      // getOldestModificationDate
 
-      const Headers = parseHeaders(enum{auth}, &headersIterator) catch return responseWriter.writeError(400);
-      if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
+      var buf: [20]u8 = undefined;
+      var timestamp: ReidrectionMap.TimestampType = undefined;
+      if (rmap.modification.getOldest()) |entry| {
+        timestamp = entry.timestamp;
+      } else {
+        timestamp = 0;
+      }
 
-      var mapIterator = rmap.map.iterator();
-      var locationSplitIterator = std.mem.splitScalar(u8, location, '.');
-
-      const fromStr = locationSplitIterator.next() orelse return responseWriter.writeError(400);
-      const from = std.fmt.parseInt(u32, fromStr, 10) catch return responseWriter.writeError(400);
-
-      const lenStr = locationSplitIterator.next() orelse return responseWriter.writeError(400);
-      const len = std.fmt.parseInt(u32, lenStr, 10) catch return responseWriter.writeError(400);
-
-      if (from >= rmap.map.capacity()) return responseWriter.writeError(404);
-      mapIterator.index = from;
-
-      return responseWriter.writeMapIterator(&mapIterator, len);
+      const len = std.fmt.formatIntBuf(buf[0..], timestamp, 10, .lower, .{});
+      try responseWriter.writeString(buf[0..len]);
     },
     else => {},
   }

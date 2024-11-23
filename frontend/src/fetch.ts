@@ -1,4 +1,4 @@
-export const site = 'http://127.0.0.1:8080'
+export const site = 'http://127.0.0.1:8080/'
 
 interface StorageItem<T> {
   val: T | null
@@ -25,7 +25,7 @@ function getStorageItem<T>(key: string, stringify?: (value: T) => string, parser
 export const loginData = getStorageItem<{method: string, auth: string}>("!Auth", JSON.stringify, JSON.parse)
 const methodHash = 'a03f2fd631370334952c5db487ce810e6af747de720ed7a05543a4c1204d3998'
 
-// Encryption functions
+// Hashes a string using SHA-256
 async function hash(val: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(val);
@@ -37,15 +37,161 @@ async function hash(val: string): Promise<string> {
   return hashHex;
 }
 
+// Validate and save the credentials to the loginData (in localStorage)
 export async function validateAndSaveCredentials(username: string, password: string) {
   if (await hash(username) !== methodHash)  throw new Error('Invalid username')
   const response = await fetch(site, {
     method: 'POST',
-    headers: { 'auth': password }
+    headers: [
+      ['auth', password],
+    ],
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
 
   loginData.set({ method: username, auth: password })
 }
+
+// @param from: the location that will be redirected
+// @param to: where the site should redirect to
+// @param lifetime: The lifetime of the entries in seconds
+//
+// @throws Error if the server returns an error
+export async function addRedirection(from: string, to: string, lifetime: number) {
+  const response = await fetch(site +  from, {
+    method: loginData.get()!.method + '0',
+    headers: [
+      ['auth', loginData.get()!.auth],
+      ['dest', to],
+      ['death', String(lifetime)],
+    ],
+  })
+
+  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
+}
+
+// @param from: the location that will be redirected
+//
+// @throws Error if the server returns an error
+export async function deleteRedirection(from: string) {
+  const response = await fetch(site + from, {
+    method: loginData.get()!.method + '1',
+    headers: [
+      ['auth', loginData.get()!.auth],
+    ],
+  })
+
+  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
+}
+
+// Returns the number of entries in the redirection map
+//
+// @throws Error if the server returns an error
+export async function getRedirectionMapCount(): Promise<number> {
+  const response = await fetch(site, {
+    method: loginData.get()!.method + '0',
+    headers: { auth: loginData.get()!.auth }
+  })
+
+  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
+
+  return Number(await response.text())
+}
+
+export interface MapEntry {
+  location: string
+  dest: string
+  deathat: number
+}
+
+// @param from: the location that will be redirected
+// @param count: the number of entries to be returned
+//
+// @throws Error if the server returns an error
+export async function getRedirectionMapEntries(from: number, count: number): Promise<{entries: MapEntry[], nextIndex: number}> {
+  const response = await fetch(site + String(from) + '.' + String(count), {
+    method: loginData.get()!.method + '2',
+    headers:[
+      ['auth', loginData.get()!.auth],
+    ],
+  })
+
+  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
+
+  const body = await response.text()
+  const entryStrings = body.split('\n')
+  const nextIndex = Number(entryStrings.pop()!)
+  const entries: MapEntry[] = []
+  for (let i = 0; i < entryStrings.length; i++) {
+    const [deathat, location, dest] = entryStrings[i].split('\0')
+    entries.push({ deathat: Number(deathat), location, dest })
+  }
+
+  return { entries, nextIndex }
+}
+
+// Returns the oldest modification date of the site
+//
+// @throws Error if the server returns an error
+export async function getOldestModificationDate(): Promise<Date> {
+  const response = await fetch(site, {
+    method: loginData.get()!.method + '1',
+    headers: [
+      ['auth', loginData.get()!.auth],
+    ],
+  })
+
+  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
+  return new Date(await response.text())
+}
+
+enum ModificationType {
+  CREATED,
+  DELETED,
+}
+
+interface Modification {
+  timestamp: Date
+  modificationType: ModificationType
+  modification: MapEntry
+}
+
+// Returns all the modification after the given date
+//
+// @throws Error if the server returns an error
+export async function getModificationsAfterDate(date: Date): Promise<Modification[]> {
+  const response = await fetch(site + String(Math.trunc(date.getTime()/1000)), {
+    method: loginData.get()!.method + '3',
+    headers: [
+      ['auth', loginData.get()!.auth],
+    ],
+  })
+
+  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
+  const midificationStrings = (await response.text()).split('\n')
+  const modifications: Modification[] = []
+
+  for (let i = 0; i < midificationStrings.length; i++) {
+    let type: ModificationType
+    if (midificationStrings[i].charAt(0) === '+') {
+      type = ModificationType.CREATED
+    } else if (midificationStrings[i].charAt(0) === '-') {
+      type = ModificationType.DELETED
+    } else {
+      continue
+    }
+    const [timestamp, deathat, location, dest] = midificationStrings[i].substring(1).split('\0')
+    modifications.push({ timestamp: new Date(Number(timestamp)), modificationType: type, modification: { deathat: Number(deathat), location, dest } })
+  }
+
+  return modifications
+}
+
+
+(globalThis as any).fetchingFunctions = [
+  addRedirection,
+  deleteRedirection,
+  getRedirectionMapCount,
+  getRedirectionMapEntries,
+]
 
