@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, createEffect, Show, createResource, For } from 'solid-js'
+import { createSignal, onCleanup, createEffect, Show, createResource, For, indexArray } from 'solid-js'
 import { addRedirection, deleteRedirection, getRedirectionMapEntries, getModificationsAfterIndex, getRedirectionMapCount, site, ModificationType } from '../utils/fetch'
 import { Table } from '../components/ui/table'
 import { Pagination } from '../components/ui/pagination'
@@ -15,6 +15,9 @@ import {
 } from "../components/ui/card"
 import { TextField, TextFieldInput, TextFieldLabel } from "../components/ui/text-field"
 import { Setter } from 'solid-js'
+import { cn } from '../lib/utils'
+import { Badge } from '../components/ui/badge'
+import { IconArrowRight, IconExternalLink, IconMinus, IconPlus } from '../components/icons'
 
 
 function AddRedirection() {
@@ -127,13 +130,66 @@ function ShowHistory() {
     console.log(history())
   })
   return (
-    <Show when={history()}>
-      <For each={history()!.entries}>
-        {entry => <Card class="w-max m-4 w-max-lg flex">
-          <CardHeader>
-            <CardTitle>{entry.modificationType === ModificationType.CREATED ? 'Created' : 'Deleted'} ({entry.index})</CardTitle>
-          </CardHeader>
-          <CardContent>
+    <Show when={history()} fallback={
+      history()?.entries?.length === 0 ?
+        <div class="flex h-[600px] flex-col gap-2 overflow-auto p-4 pt-0">
+          <div class="flex flex-col items-center justify-center gap-2 text-center">
+            <div class="text-xl font-bold">No history found</div>
+            <div class="text-sm text-muted-foreground">
+              You haven't made any changes to the site yet
+            </div>
+          </div>
+        </div>:
+        <div class="flex h-[600px] flex-col gap-2 overflow-auto p-4 pt-0">
+          <div class="flex flex-col items-center justify-center gap-2 text-center">
+            <div class="text-xl font-bold">Loading history...</div>
+            <div class="text-sm text-muted-foreground">
+              Please wait while we load the history
+            </div>
+          </div>
+        </div>
+    }>
+      <div class="flex flex-col overflow-auto p-4">
+        <For each={history()!.entries}>
+          {(item) => (
+            <button
+              type="button"
+              class="flex flex-col items-start gap-2 rounded-lg border p-3 text-left text-sm transition-all"
+            >
+              <div class="flex w-full flex-col gap-1">
+                <div class="flex items-center">
+                  {item.modificationType === ModificationType.CREATED?
+                    <IconPlus class="rounded-full mr-2 bg-green-700" />:
+                    <IconMinus class="rounded-full mr-2 bg-red-700" />
+                  }
+                  <div class="items-center gap-2 flex p-2 rounded-full hover:bg-accent" onclick={() => window.open(site + item.modification.location, '_blank')}>
+                    <div class="font-semibold">{site + item.modification.location}</div>
+                  </div>
+                  <IconArrowRight class="mx-1" />
+                  <div class="items-center gap-2 flex p-2 rounded-full hover:bg-accent" onclick={() => window.open(item.modification.dest, '_blank')}>
+                    <div class="font-semibold">{item.modification.dest}</div>
+                    <IconExternalLink />
+                  </div>
+                  <div class="ml-auto text-xs">
+                    {item.modificationType === ModificationType.CREATED ?
+                      <>Till {new Date(item.modification.deathat).toLocaleString()}</>:
+                      <>Deleted (till {new Date(item.modification.deathat).toLocaleString()})</>}
+                  </div>
+                </div>
+              </div>
+            </button>
+          )}
+        </For>
+      </div>
+    </Show>
+  )
+  return (
+    <For each={history()!.entries}>
+      {entry => <Card class="w-max m-4 w-max-lg flex">
+        <CardHeader>
+          <CardTitle>{entry.modificationType === ModificationType.CREATED ? 'Created' : 'Deleted'} ({entry.index})</CardTitle>
+        </CardHeader>
+        <CardContent>
             <CardDescription>
               From: {entry.modification.location}
             </CardDescription>
@@ -148,7 +204,6 @@ function ShowHistory() {
           </CardContent>
         </Card>}
       </For>
-    </Show>
   )
 }
 
