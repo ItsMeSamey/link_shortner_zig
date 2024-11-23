@@ -160,7 +160,14 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
 
         var iterator = rmap.modification.getIteratorAfter(sortCtx{
           .target = std.fmt.parseInt(ReidrectionMap.TimestampType, location, 10) catch return responseWriter.writeError(400)
-        }, sortCtx.compareFn) orelse return responseWriter.writeError(200);
+        }, sortCtx.compareFn) orelse return responseWriter.writeString("0");
+
+        {
+          var copy = iterator;
+          while (copy.next()) |val| std.debug.print("iterator: {any}\n", .{val});
+
+          for (0..copy.list.end) |i| std.debug.print("iterator: {any}\n", .{copy.list.buf[i].modification});
+        }
 
         return responseWriter.writeMapModificationIterator(&iterator);
       },

@@ -1,5 +1,5 @@
-import { createSignal, onCleanup, createEffect, Show } from 'solid-js'
-import { addRedirection, deleteRedirection, getRedirectionMapEntries, getModificationsAfterIndex, getRedirectionMapCount } from '../utils/fetch'
+import { createSignal, onCleanup, createEffect, Show, createResource, For } from 'solid-js'
+import { addRedirection, deleteRedirection, getRedirectionMapEntries, getModificationsAfterIndex, getRedirectionMapCount, site, ModificationType } from '../utils/fetch'
 import { Table } from '../components/ui/table'
 import { Pagination } from '../components/ui/pagination'
 import { Button } from "../components/ui/button"
@@ -30,7 +30,13 @@ function AddRedirection() {
     setSuccess(null)
     setFrom(prev => {
       if (!prev) return ''
-      if (prev[0] == '/') prev = prev.slice(1)
+      if (prev.startsWith(site)) {
+        prev = prev.slice(site.length)
+      } else if (prev[0] == '/') {
+        prev = prev.slice(1)
+      }
+
+      if (prev.startsWith('http')) throw new Error('Invalid from, location must not include the domain')
       return prev
     })
     setTo(prev => {
@@ -77,7 +83,7 @@ function AddRedirection() {
         <TextField class="space-y-1">
           <TextFieldLabel>From</TextFieldLabel>
           <TextFieldInput
-            placeholder="eg. /google"
+            placeholder="/google"
             type="text"
             value={from()}
             onInput={(e) => setFrom(e.target.nodeValue ?? '') }
@@ -112,6 +118,37 @@ function AddRedirection() {
         </Button>
       </CardFooter>
     </Card>
+  )
+}
+
+function ShowHistory() {
+  const [history] = createResource(0, getModificationsAfterIndex)
+  createEffect(() => {
+    console.log(history())
+  })
+  return (
+    <Show when={history()}>
+      <For each={history()!.entries}>
+        {entry => <Card class="w-max m-4 w-max-lg flex">
+          <CardHeader>
+            <CardTitle>{entry.modificationType === ModificationType.CREATED ? 'Created' : 'Deleted'} ({entry.index})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <CardDescription>
+              From: {entry.modification.location}
+            </CardDescription>
+            <CardDescription>
+              To: {entry.modification.dest}
+            </CardDescription>
+            <Show when={entry.modificationType == ModificationType.CREATED}>
+              <CardDescription>
+                Till: {new Date(entry.modification.deathat).toLocaleString()}
+              </CardDescription>
+            </Show>
+          </CardContent>
+        </Card>}
+      </For>
+    </Show>
   )
 }
 
@@ -179,6 +216,7 @@ export default function Dashboard({sP}: {sP: Setter<string>}) {
     <div>
       <h1>Redirection Dashboard</h1>
       <AddRedirection />
+      <ShowHistory />
     </div>
   )
 }

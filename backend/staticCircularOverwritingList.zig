@@ -28,17 +28,22 @@ pub fn GetStaticCircularOverwritingList(comptime usizeCapacity: usize, comptime 
     }
 
     pub fn getNewest(self: *Self) ?*T {
-      if (self.end == 0 and !self.isFull) return null;
-      return &self.buf[self.end];
+      if (self.isFull) {
+        @setEvalBranchQuota(1024);
+        const nIndex = self.end + 1;
+        if (nIndex == capacity) return &self.buf[0];
+        return &self.buf[nIndex];
+      }
+      if (self.end == 0) return null;
+      return &self.buf[0];
     }
     
     pub fn push(self: *Self, value: T) ?T {
-      var retval: ?T = null;
-      self.end += 1;
-      if (self.end == capacity) self.isFull = true;
-      if (self.isFull) retval = self.buf[self.end];
+      const retval = if (self.isFull) self.buf[self.end] else null;
       self.buf[self.end] = value;
 
+      self.end += 1;
+      if (self.end == capacity) self.isFull = true;
       return retval;
     }
 
@@ -49,14 +54,13 @@ pub fn GetStaticCircularOverwritingList(comptime usizeCapacity: usize, comptime 
 
       pub fn next(self: *@This()) ?T {
         if (self.finished) return null;
+
         const retval: ?T = self.list.buf[self.index];
 
-        if (self.index == self.list.end) {
-          self.finished = true;
-          return retval;
-        }
+        self.index += 1;
+        if (self.index == capacity) self.index = 0;
+        if (self.index == self.list.end) self.finished = true;
 
-        if (self.index == capacity-1) self.index = 0;
         return retval;
       }
     };
@@ -64,17 +68,17 @@ pub fn GetStaticCircularOverwritingList(comptime usizeCapacity: usize, comptime 
     pub fn getIteratorAfter(self: *Self, context: anytype, compareFn: fn (ctx: @TypeOf(context), a: T) std.math.Order) ?Iterator {
       var beginIndex: capacityType = undefined;
       if (self.isFull) {
-        if (std.sort.binarySearch(T, self.buf[0..self.end+1], context, compareFn)) |idx| {
+        if (std.sort.binarySearch(T, self.buf[0..self.end], context, compareFn)) |idx| {
           beginIndex = @intCast(idx);
         } else {
-          if (std.sort.binarySearch(T, self.buf[self.end+1..], context, compareFn)) |idx| {
+          if (std.sort.binarySearch(T, self.buf[self.end..], context, compareFn)) |idx| {
             beginIndex = @intCast(idx + self.end + 1);
           } else {
             return null;
           }
         }
       } else {
-        beginIndex = @intCast(std.sort.binarySearch(T, self.buf[0..self.end+1], context, compareFn) orelse return null);
+        beginIndex = @intCast(std.sort.binarySearch(T, self.buf[0..self.end], context, compareFn) orelse return null);
       }
 
       return .{

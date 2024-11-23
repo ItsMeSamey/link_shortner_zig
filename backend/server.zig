@@ -62,7 +62,10 @@ const AccptResponse = struct{
       .context = @ptrCast(client_self),
       .writeFn = struct {
         fn write(context: *const anyopaque, data: []const u8) !usize {
-          return linux.write(@as(@TypeOf(client_self), @ptrCast(@alignCast(context))).client, data.ptr, data.len);
+          const written = linux.write(@as(@TypeOf(client_self), @ptrCast(@alignCast(context))).client, data.ptr, data.len);
+          if (written == 0) return error.Closed;
+          if (@as(isize, @bitCast(written)) < 0) return error.WriteError;
+          return written;
         }
       }.write,
     };
@@ -76,7 +79,7 @@ pub fn accept(self: *Server, buf: []u8) !AccptResponse {
   errdefer _ = linux.close(client);
 
   const n = linux.read(client, buf.ptr, buf.len);
-  if (n == 0) return error.ReadError;
+  if (@as(isize, @bitCast(n)) < 0) return error.ReadError;
 
   return .{ .client = client, .request = buf[0..n] };
 }

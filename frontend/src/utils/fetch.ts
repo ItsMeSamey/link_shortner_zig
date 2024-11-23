@@ -154,8 +154,9 @@ export async function getModificationsAfterIndex(index: number): Promise<{entrie
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
   const text = await response.text()
+  if (text.length == 0) throw new Error('Server error, Got Invalid response: ' + text)
+
   const midificationStrings = text.split('\n')
-  if (midificationStrings.length < 2) throw new Error('Server error, Got Invalid response: ' + text)
   const oldestIndex = Number(midificationStrings.pop()!)
   const modifications: Modification[] = []
 
