@@ -133,7 +133,7 @@ export async function getRedirectionMapEntries(from: number, count: number): Pro
 // Returns the oldest modification date of the site
 //
 // @throws Error if the server returns an error
-export async function getOldestModificationDate(): Promise<Date> {
+export async function getOldestModificationIndex(): Promise<Date> {
   const response = await fetch(site, {
     method: loginData.get()!.method + '1',
     headers: [
@@ -151,7 +151,7 @@ enum ModificationType {
 }
 
 interface Modification {
-  timestamp: Date
+  index: number
   modificationType: ModificationType
   modification: MapEntry
 }
@@ -159,7 +159,7 @@ interface Modification {
 // Returns all the modification after the given date
 //
 // @throws Error if the server returns an error
-export async function getModificationsAfterDate(date: Date): Promise<Modification[]> {
+export async function getModificationsAfterIndex(date: Date): Promise<{entries: Modification[], oldestIndex: number}> {
   const response = await fetch(site + String(Math.trunc(date.getTime()/1000)), {
     method: loginData.get()!.method + '3',
     headers: [
@@ -168,7 +168,10 @@ export async function getModificationsAfterDate(date: Date): Promise<Modificatio
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
-  const midificationStrings = (await response.text()).split('\n')
+  const text = await response.text()
+  const midificationStrings = text.split('\n')
+  if (midificationStrings.length < 2) throw new Error('Server error, Got Invalid response: ' + text)
+  const oldestIndex = Number(midificationStrings.pop()!)
   const modifications: Modification[] = []
 
   for (let i = 0; i < midificationStrings.length; i++) {
@@ -180,11 +183,11 @@ export async function getModificationsAfterDate(date: Date): Promise<Modificatio
     } else {
       continue
     }
-    const [timestamp, deathat, location, dest] = midificationStrings[i].substring(1).split('\0')
-    modifications.push({ timestamp: new Date(Number(timestamp)), modificationType: type, modification: { deathat: Number(deathat), location, dest } })
+    const [index, deathat, location, dest] = midificationStrings[i].substring(1).split('\0')
+    modifications.push({ index: Number(index), modificationType: type, modification: { deathat: Number(deathat), location, dest } })
   }
 
-  return modifications
+  return { entries: modifications, oldestIndex }
 }
 
 
@@ -193,5 +196,7 @@ export async function getModificationsAfterDate(date: Date): Promise<Modificatio
   deleteRedirection,
   getRedirectionMapCount,
   getRedirectionMapEntries,
+  getOldestModificationIndex,
+  getModificationsAfterIndex,
 ]
 

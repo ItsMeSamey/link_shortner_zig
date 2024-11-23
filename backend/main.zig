@@ -151,17 +151,17 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
         const Headers = parseHeaders(enum{auth}, &headersIterator) catch return responseWriter.writeError(400);
         if (!std.mem.eql(u8, Headers.auth, auth)) return responseWriter.writeError(401);
 
-        const date = std.fmt.parseInt(ReidrectionMap.TimestampType, location, 10) catch return responseWriter.writeError(400);
-
         const sortCtx = struct {
           target: ReidrectionMap.TimestampType,
-
           fn compareFn(ctx: @This(), a: ReidrectionMap.ModificationWithTimestamp) std.math.Order {
-            return std.math.order(a.timestamp, ctx.target);
+            return std.math.order(a.index, ctx.target);
           }
         };
 
-        var iterator = rmap.modification.getIteratorAfter(sortCtx{ .target = date }, sortCtx.compareFn) orelse return responseWriter.writeError(200);
+        var iterator = rmap.modification.getIteratorAfter(sortCtx{
+          .target = std.fmt.parseInt(ReidrectionMap.TimestampType, location, 10) catch return responseWriter.writeError(400)
+        }, sortCtx.compareFn) orelse return responseWriter.writeError(200);
+
         return responseWriter.writeMapModificationIterator(&iterator);
       },
       else => {},
@@ -185,14 +185,14 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
       // getOldestModificationDate
 
       var buf: [20]u8 = undefined;
-      var timestamp: ReidrectionMap.TimestampType = undefined;
+      var index: u64 = undefined;
       if (rmap.modification.getOldest()) |entry| {
-        timestamp = entry.timestamp;
+        index = entry.index;
       } else {
-        timestamp = 0;
+        index = 0;
       }
 
-      const len = std.fmt.formatIntBuf(buf[0..], timestamp, 10, .lower, .{});
+      const len = std.fmt.formatIntBuf(buf[0..], index, 10, .lower, .{});
       try responseWriter.writeString(buf[0..len]);
     },
     else => {},

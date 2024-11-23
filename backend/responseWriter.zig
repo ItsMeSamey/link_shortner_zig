@@ -68,7 +68,7 @@ pub fn writeMapIterator(self: *const @This(), iter: *ReidrectionMap.Map.Iterator
   var done: u32 = 0;
 
   while (iter.next()) |val| {
-    try std.fmt.format(anyBufferedWriter, "{d}\x00{s}\x00{s}\n", .{val.key_ptr.location(), val.key_ptr.dest()});
+    try std.fmt.format(anyBufferedWriter, "{d}\x00{s}\x00{s}\n", .{val.key_ptr.deathat, val.key_ptr.location(), val.key_ptr.dest()});
 
     done += 1;
     if (done == count) break;
@@ -83,8 +83,8 @@ pub fn writeMapModificationIterator(self: *const @This(), iter: *@import("redire
 
   while (iter.next()) |val| {
     switch (val.modification) {
-      .add =>    |v| {try std.fmt.format(anyBufferedWriter, "+{d}\x00{d}\x00{s}\x00{s}\n", .{val.timestamp, v.deathat, v.location(), v.dest()});},
-      .remove => |v| {try std.fmt.format(anyBufferedWriter, "-{d}\x00{d}\x00{s}\x00{s}\n", .{val.timestamp, v.deathat, v.location(), v.dest()});},
+      .add =>    |v| {try std.fmt.format(anyBufferedWriter, "+{d}\x00{d}\x00{s}\x00{s}\n", .{val.index, v.deathat, v.location(), v.dest()});},
+      .remove => |v| {try std.fmt.format(anyBufferedWriter, "-{d}\x00{d}\x00{s}\x00{s}\n", .{val.index, v.deathat, v.location(), v.dest()});},
     }
   }
 

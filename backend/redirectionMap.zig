@@ -1,5 +1,7 @@
 const std = @import("std");
 
+var modificationIndex: u64 = 0;
+
 modification: CircularOverwritingList,
 map: Map,
 
@@ -7,7 +9,7 @@ const ReidrectionMap = @This();
 
 pub const TimestampType = i64;
 pub const ModificationWithTimestamp = struct {
-  timestamp: TimestampType,
+  index: u64,
   modification: Modification,
   
   const Modification = union(enum) {
@@ -126,7 +128,9 @@ pub fn init(allocator: std.mem.Allocator) ReidrectionMap {
 
 pub fn add(self: *ReidrectionMap, location: []const u8, dest: []const u8, deathat: TimestampType) !void {
   const k = try Key.init(self.map.allocator, location, dest, deathat);
-  const removed = self.modification.push(.{ .timestamp = std.time.timestamp(), .modification = .{ .add = k } });
+  const removed = self.modification.push(.{ .index = modificationIndex, .modification = .{ .add = k } });
+  modificationIndex += 1;
+
   if (removed) |r| {
     switch (r.modification) {
       .remove => |v| self.map.allocator.free(v.dataSlice()),
@@ -143,7 +147,8 @@ pub fn lookup(self: *ReidrectionMap, location: []const u8) ?*Key {
 
 pub fn remove(self: *ReidrectionMap, location: []const u8) bool {
   if (self.map.getKeyPtr(.{ .data = location.ptr, .deathat = undefined, .keyLen = @intCast(location.len), .valLen = undefined })) |kptr| {
-    const removed = self.modification.push(.{ .timestamp = std.time.timestamp(), .modification = .{ .add = kptr.* } });
+    const removed = self.modification.push(.{ .index = modificationIndex, .modification = .{ .add = kptr.* } });
+    modificationIndex += 1;
     if (removed) |r| {
       switch (r.modification) {
         .remove => |v| self.map.allocator.free(v.dataSlice()),
