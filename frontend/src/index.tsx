@@ -4,7 +4,8 @@ import Login from './pages/Login';
 import './app.css'
 import { createSignal, Match, Switch } from 'solid-js';
 import ModeToggle from './components/custom/ModeToggle';
-import { loginData } from './fetch';
+import { loginData } from './utils/fetch';
+import Dashboard from './pages/Dashboard';
 
 const [page, setPage] = createSignal<string>(loginData.get()? 'Dashboard': 'Login');
 
@@ -15,12 +16,15 @@ render(function() {
       <ColorModeScript storageType={storageManager.type} />
       <ColorModeProvider initialColorMode='dark' storageManager={storageManager}>
         <div class='h-screen w-screen flex flex-col'>
-          <div class='flex justify-end'>
-            <ModeToggle />
-          </div>
           <Switch>
             <Match when={page() === 'Login'}>
-              <Login setPage={setPage} />
+              <div class='flex justify-end'>
+                <ModeToggle />
+              </div>
+              <Login sP={setPage} />
+            </Match>
+            <Match when={page() === 'Dashboard'}>
+              <Dashboard sP={setPage} />
             </Match>
           </Switch>
         </div>

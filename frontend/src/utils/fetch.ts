@@ -1,29 +1,14 @@
+import { getStorageItem } from "./storageItem";
+
 export const site = 'http://127.0.0.1:8080/'
-
-interface StorageItem<T> {
-  val: T | null
-  get: () => T | null
-  set: (val: T | null) => void
-}
-
-function getStorageItem<T>(key: string, stringify?: (value: T) => string, parser?: (value: string) => T, ): StorageItem<T> {
-  const value = localStorage.getItem(key)
-  return {
-    val: value !== null && value !== undefined && parser ? parser(value) : null,
-    get() { return this.val },
-    set(val: T | null) {
-      if (val === null) {
-        localStorage.removeItem(key)
-      } else {
-        localStorage.setItem(key, stringify ? stringify(val): String(val))
-      }
-      this.val = val
-    },
-  }
-}
 
 export const loginData = getStorageItem<{method: string, auth: string}>("!Auth", JSON.stringify, JSON.parse)
 const methodHash = 'a03f2fd631370334952c5db487ce810e6af747de720ed7a05543a4c1204d3998'
+
+export const modificationIndex = getStorageItem<number>("!ModificationIndex", String, Number)
+if (modificationIndex.get() === null) {
+  getOldestModificationIndex().then(modificationIndex.set).catch(console.error)
+}
 
 // Hashes a string using SHA-256
 async function hash(val: string): Promise<string> {
@@ -133,7 +118,7 @@ export async function getRedirectionMapEntries(from: number, count: number): Pro
 // Returns the oldest modification date of the site
 //
 // @throws Error if the server returns an error
-export async function getOldestModificationIndex(): Promise<Date> {
+export async function getOldestModificationIndex(): Promise<number> {
   const response = await fetch(site, {
     method: loginData.get()!.method + '1',
     headers: [
@@ -142,15 +127,15 @@ export async function getOldestModificationIndex(): Promise<Date> {
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
-  return new Date(await response.text())
+  return Number(await response.text())
 }
 
-enum ModificationType {
+export enum ModificationType {
   CREATED,
   DELETED,
 }
 
-interface Modification {
+export interface Modification {
   index: number
   modificationType: ModificationType
   modification: MapEntry
@@ -159,8 +144,8 @@ interface Modification {
 // Returns all the modification after the given date
 //
 // @throws Error if the server returns an error
-export async function getModificationsAfterIndex(date: Date): Promise<{entries: Modification[], oldestIndex: number}> {
-  const response = await fetch(site + String(Math.trunc(date.getTime()/1000)), {
+export async function getModificationsAfterIndex(index: number): Promise<{entries: Modification[], oldestIndex: number}> {
+  const response = await fetch(site + String(index), {
     method: loginData.get()!.method + '3',
     headers: [
       ['auth', loginData.get()!.auth],

@@ -9,9 +9,9 @@ import {
   CardTitle
 } from "../components/ui/card"
 import { TextField, TextFieldInput, TextFieldLabel } from "../components/ui/text-field"
-import { validateAndSaveCredentials } from "../fetch"
+import { validateAndSaveCredentials } from "../utils/fetch"
  
-export default function Login({setPage}: {setPage: Setter<string>}) {
+export default function Login({sP}: {sP: Setter<string>}) {
   const [error, setError] = createSignal<string | null>(null)
   const [loginText, setLoginText] = createSignal<string>('>.^.<');
 
@@ -56,7 +56,7 @@ export default function Login({setPage}: {setPage: Setter<string>}) {
       <CardFooter class="justify-center">
         <Button onclick={() => {
           if (username.value && password.value) {
-            validateAndSaveCredentials(username.value, password.value).then(() => setPage('Dashboard')).catch(e => setError(e.message))
+            validateAndSaveCredentials(username.value, password.value).then(() => sP('Dashboard')).catch(e => setError(e.message))
           } else if (!username.value) {
             setError('Username is required')
           } else if (!password.value) {
