@@ -64,7 +64,7 @@ function AddRedirection() {
         <CardTitle class="text-center">Add Redirection</CardTitle>
         <Show when={error()} fallback={
           <CardDescription class="text-center">
-            {success() ? success() : 'Fill out the form to add a redirection'}
+            {success() ? success() : 'Add a redirection'}
           </CardDescription>
         }>
           <CardDescription class="text-center text-red-500">
@@ -171,9 +171,9 @@ export default function Dashboard({sP}: {sP: Setter<string>}) {
   //  }
   //}
   //
-  createEffect(() => {
-    fetchRedirections(0, 1024).then(setRedirections).catch(e => setError(e.message))
-  })
+  //createEffect(() => {
+  //  fetchRedirections(0, 1024).then(setRedirections).catch(e => setError(e.message))
+  //})
 
   return (
     <div>

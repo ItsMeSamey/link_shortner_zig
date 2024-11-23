@@ -14,7 +14,7 @@ render(function() {
   return (
     <>
       <ColorModeScript storageType={storageManager.type} />
-      <ColorModeProvider initialColorMode='dark' storageManager={storageManager}>
+      <ColorModeProvider initialColorMode='dark' disableTransitionOnChange={false} storageManager={storageManager}>
         <div class='h-screen w-screen flex flex-col'>
           <Switch>
             <Match when={page() === 'Login'}>
@@ -24,6 +24,7 @@ render(function() {
               <Login sP={setPage} />
             </Match>
             <Match when={page() === 'Dashboard'}>
+                <ModeToggle />
               <Dashboard sP={setPage} />
             </Match>
           </Switch>
