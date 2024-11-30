@@ -1,3 +1,4 @@
+//! a circular queue like data structure, but we overwrite the oldest entry instead of expanding
 const std = @import("std");
 
 pub fn GetStaticCircularOverwritingList(comptime usizeCapacity: usize, comptime T: type) type {

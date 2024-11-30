@@ -1,5 +1,5 @@
+//! A hash map that stores redirection entries
 const std = @import("std");
-
 pub var modificationIndex: u64 = 0;
 
 modification: CircularOverwritingList,

@@ -1,6 +1,5 @@
-test { std.testing.refAllDeclsRecursive( *const @This()); }
 const std = @import("std");
-const ReidrectionMap = @import("redirectionMap.zig");
+const ReidrectionMap = @import("../redirections/redirectionMap.zig");
 
 const Self = @This();
 const Header = struct {
@@ -85,7 +84,7 @@ pub fn writeMapIterator(self: *const Self, iter: *ReidrectionMap.Map.Iterator, c
   try chunkWriter.finish();
 }
 
-pub fn writeMapModificationIterator(self: *const @This(), iter: *@import("redirectionMap.zig").CircularOverwritingList.Iterator) !void {
+pub fn writeMapModificationIterator(self: *const @This(), iter: *ReidrectionMap.CircularOverwritingList.Iterator) !void {
   var chunkWriter = try ChunkedWriterType.init(self.writer);
   var genericChunkWriter = chunkWriter.writer();
   const anyChunkWriter = genericChunkWriter.any();
@@ -97,7 +96,7 @@ pub fn writeMapModificationIterator(self: *const @This(), iter: *@import("redire
     }
   }
 
-  try std.fmt.format(anyChunkWriter, "{x}", .{ @import("redirectionMap.zig").modificationIndex });
+  try std.fmt.format(anyChunkWriter, "{x}", .{ ReidrectionMap.modificationIndex });
   try chunkWriter.finish();
 }
 

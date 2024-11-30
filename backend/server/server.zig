@@ -1,3 +1,4 @@
+//! A simple server implementation
 const std = @import("std");
 const posix = std.posix;
 

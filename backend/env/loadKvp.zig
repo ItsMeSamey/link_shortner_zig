@@ -1,3 +1,5 @@
+//! This is use to load key value pairs.
+//! For example it is used to load and embed .env file at compile time.
 const std = @import("std");
 const Kvp = struct { @"0": []const u8, @"1": []const u8 };
 

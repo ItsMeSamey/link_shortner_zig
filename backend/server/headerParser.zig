@@ -1,3 +1,4 @@
+//! An optimized header parser
 const std = @import("std");
 
 fn HeadersStructFromFieldNames(comptime HeaderEnum: type) type {
