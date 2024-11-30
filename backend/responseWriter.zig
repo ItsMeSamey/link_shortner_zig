@@ -81,7 +81,7 @@ pub fn writeMapIterator(self: *const Self, iter: *ReidrectionMap.Map.Iterator, c
     if (done == count) break;
   }
 
-  try std.fmt.format(anyChunkWriter, "{x}\n", .{ iter.index });
+  try std.fmt.format(anyChunkWriter, "{x}", .{ iter.index });
   try chunkWriter.finish();
 }
 
@@ -97,6 +97,7 @@ pub fn writeMapModificationIterator(self: *const @This(), iter: *@import("redire
     }
   }
 
+  try std.fmt.format(anyChunkWriter, "{x}", .{ @import("redirectionMap.zig").modificationIndex });
   try chunkWriter.finish();
 }
 

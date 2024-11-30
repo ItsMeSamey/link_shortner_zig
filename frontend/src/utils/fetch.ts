@@ -27,9 +27,7 @@ export async function validateAndSaveCredentials(username: string, password: str
   if (await hash(username) !== methodHash)  throw new Error('Invalid username')
   const response = await fetch(site, {
     method: 'POST',
-    headers: [
-      ['auth', password],
-    ],
+    headers: { auth: loginData.get()!.auth },
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
@@ -45,11 +43,7 @@ export async function validateAndSaveCredentials(username: string, password: str
 export async function addRedirection({location, dest, deathat}: RedirectionInfo) {
   const response = await fetch(site +  location, {
     method: loginData.get()!.method + '0',
-    headers: {
-      auth: loginData.get()!.auth,
-      dest,
-      death: deathat,
-    } as unknown  as HeadersInit,
+    headers: { auth: loginData.get()!.auth, dest, death: deathat } as unknown  as HeadersInit,
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
@@ -61,7 +55,7 @@ export async function addRedirection({location, dest, deathat}: RedirectionInfo)
 export async function deleteRedirection(from: string) {
   const response = await fetch(site + from, {
     method: loginData.get()!.method + '1',
-    headers: { auth: loginData.get()!.auth }
+    headers: { auth: loginData.get()!.auth },
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
@@ -73,7 +67,7 @@ export async function deleteRedirection(from: string) {
 export async function getRedirectionMapCount(): Promise<number> {
   const response = await fetch(site, {
     method: loginData.get()!.method + '0',
-    headers: { auth: loginData.get()!.auth }
+    headers: { auth: loginData.get()!.auth },
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
@@ -94,9 +88,7 @@ export interface RedirectionInfo {
 export async function getRedirectionMapEntries(from: number, count: number): Promise<{entries: RedirectionInfo[], nextIndex: number}> {
   const response = await fetch(site + String(from) + '.' + String(count), {
     method: loginData.get()!.method + '2',
-    headers:[
-      ['auth', loginData.get()!.auth],
-    ],
+    headers: { auth: loginData.get()!.auth },
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
@@ -119,9 +111,7 @@ export async function getRedirectionMapEntries(from: number, count: number): Pro
 export async function getOldestModificationIndex(): Promise<number> {
   const response = await fetch(site, {
     method: loginData.get()!.method + '1',
-    headers: [
-      ['auth', loginData.get()!.auth],
-    ],
+    headers: { auth: loginData.get()!.auth },
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
@@ -139,11 +129,11 @@ export interface Modification {
   modification: RedirectionInfo
 }
 
-function parseModification(text: string): {entries: Modification[], oldestIndex: number} {
-  if (text.length == 0) return {entries: [], oldestIndex: 0}
+function parseModification(text: string): {entries: Modification[], latestIndex: number} {
+  if (text.length == 0) return {entries: [], latestIndex: 0}
 
   const midificationStrings = text.split('\n')
-  const oldestIndex = Number(midificationStrings.pop()!)
+  const latestIndex = Number(midificationStrings.pop()!)
   const modifications: Modification[] = []
 
   for (let i = 0; i < midificationStrings.length; i++) {
@@ -159,15 +149,13 @@ function parseModification(text: string): {entries: Modification[], oldestIndex:
     modifications.push({ index: Number(index), modificationType: type, modification: { deathat: Number(deathat), location, dest } })
   }
 
-  return { entries: modifications, oldestIndex }
+  return { entries: modifications, latestIndex }
 }
 
-export async function getAllModifications(): Promise<{entries: Modification[], oldestIndex: number}> {
+export async function getAllModifications(): Promise<{entries: Modification[], latestIndex: number}> {
   const response = await fetch(site, {
     method: loginData.get()!.method + '3',
-    headers: [
-      ['auth', loginData.get()!.auth],
-    ],
+    headers: { auth: loginData.get()!.auth },
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
@@ -177,12 +165,10 @@ export async function getAllModifications(): Promise<{entries: Modification[], o
 // Returns all the modification after the given date
 //
 // @throws Error if the server returns an error
-export async function getModificationsAfterIndex(index: number): Promise<{entries: Modification[], oldestIndex: number}> {
+export async function getModificationsAfterIndex(index: number): Promise<{entries: Modification[], latestIndex: number}> {
   const response = await fetch(site + String(index), {
     method: loginData.get()!.method + '3',
-    headers: [
-      ['auth', loginData.get()!.auth],
-    ],
+    headers: { auth: loginData.get()!.auth },
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))

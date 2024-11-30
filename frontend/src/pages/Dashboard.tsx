@@ -18,7 +18,7 @@ import { Toaster } from '~/registry/ui/toast'
 import { addRedirection, deleteRedirection, getRedirectionMapEntries, RedirectionInfo, site } from '../utils/fetch'
 
 function showErrorToast(e: Error) {
-  showToast( {title: 'Error ' + e.name, description: e.message, variant: 'error', duration: 5000} )
+  showToast( {title: e.name, description: e.message, variant: 'error', duration: 5000} )
 }
 
 function DialogueWithRedirection(
@@ -253,12 +253,18 @@ function LocationList({list, setList}: {list: Accessor<RedirectionInfo[]>, setLi
 }
 
 export default function LocationManager() {
-  const [error, setError] = createSignal<string>('')
   const [list, setList] = createSignal<RedirectionInfo[]>([], { equals: false })
   const [addDialogue, setAddDialogue] = createSignal<RedirectionInfo | null>(null)
 
-  function updateLocationsList() { getRedirectionMapEntries(0, 1024).then(setList).catch(setError) }
-  updateLocationsList()
+  async function updateList() {
+    try {
+      const {entries} = await getRedirectionMapEntries(0, 1024)
+      setList(entries)
+    } catch (e) {
+      showErrorToast(e as Error)
+    }
+  }
+  updateList()
 
   return (
     <>
@@ -285,11 +291,6 @@ export default function LocationManager() {
           </div>
         </CardHeader>
         <CardContent>
-          <Show when={error()}>
-            <span class='flex flex-col gap-2 text-red-500 text-center px-10'>
-              {error()}
-            </span>
-          </Show>
           <LocationList list={list} setList={setList}/>
         </CardContent>
       </Card>

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-var modificationIndex: u64 = 0;
+pub var modificationIndex: u64 = 0;
 
 modification: CircularOverwritingList,
 map: Map,
