@@ -1,3 +1,5 @@
+import { createSelector, createSignal } from 'solid-js'
+
 export interface StorageItem<T> {
   val: T | null
   get: () => T | null
@@ -28,4 +30,15 @@ export function getStorageItem<T>(key: string, stringify?: (value: T) => string,
 
   return retval
 }
+
+
+export const userJwt = getStorageItem<string>('!Jwt')
+
+
+// Page Navigaion
+const [p, setP] = createSignal<string>(userJwt.get()? 'Dashboard': 'Login')
+console.log(userJwt.get(), p())
+const selectP = createSelector(p)
+
+export { p, setP, selectP }
 

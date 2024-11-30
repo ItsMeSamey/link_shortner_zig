@@ -1,4 +1,4 @@
-import { getStorageItem } from "./storageItem";
+import { getStorageItem } from "./stateManagement";
 
 export const site = 'http://127.0.0.1:8080/'
 
@@ -42,14 +42,14 @@ export async function validateAndSaveCredentials(username: string, password: str
 // @param lifetime: The lifetime of the entries in seconds
 //
 // @throws Error if the server returns an error
-export async function addRedirection(from: string, to: string, lifetime: number) {
-  const response = await fetch(site +  from, {
+export async function addRedirection({location, dest, deathat}: RedirectionInfo) {
+  const response = await fetch(site +  location, {
     method: loginData.get()!.method + '0',
-    headers: [
-      ['auth', loginData.get()!.auth],
-      ['dest', to],
-      ['death', String(lifetime)],
-    ],
+    headers: {
+      auth: loginData.get()!.auth,
+      dest,
+      deathat,
+    } as unknown  as HeadersInit,
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
@@ -61,9 +61,7 @@ export async function addRedirection(from: string, to: string, lifetime: number)
 export async function deleteRedirection(from: string) {
   const response = await fetch(site + from, {
     method: loginData.get()!.method + '1',
-    headers: [
-      ['auth', loginData.get()!.auth],
-    ],
+    headers: { auth: loginData.get()!.auth }
   })
 
   if (response.status !== 200) throw new Error('Server error ' + String(response.status))
@@ -83,7 +81,7 @@ export async function getRedirectionMapCount(): Promise<number> {
   return Number(await response.text())
 }
 
-export interface MapEntry {
+export interface RedirectionInfo {
   location: string
   dest: string
   deathat: number
@@ -93,7 +91,7 @@ export interface MapEntry {
 // @param count: the number of entries to be returned
 //
 // @throws Error if the server returns an error
-export async function getRedirectionMapEntries(from: number, count: number): Promise<{entries: MapEntry[], nextIndex: number}> {
+export async function getRedirectionMapEntries(from: number, count: number): Promise<{entries: RedirectionInfo[], nextIndex: number}> {
   const response = await fetch(site + String(from) + '.' + String(count), {
     method: loginData.get()!.method + '2',
     headers:[
@@ -106,7 +104,7 @@ export async function getRedirectionMapEntries(from: number, count: number): Pro
   const body = await response.text()
   const entryStrings = body.split('\n')
   const nextIndex = Number(entryStrings.pop()!)
-  const entries: MapEntry[] = []
+  const entries: RedirectionInfo[] = []
   for (let i = 0; i < entryStrings.length; i++) {
     const [deathat, location, dest] = entryStrings[i].split('\0')
     entries.push({ deathat: Number(deathat), location, dest })
@@ -138,7 +136,7 @@ export enum ModificationType {
 export interface Modification {
   index: number
   modificationType: ModificationType
-  modification: MapEntry
+  modification: RedirectionInfo
 }
 
 function parseModification(text: string): {entries: Modification[], oldestIndex: number} {

@@ -1,4 +1,4 @@
-import { createSignal, For, Show, Setter, onMount, onCleanup, createEffect } from 'solid-js'
+import { createSignal, For, Show, Setter } from 'solid-js'
 import {
   Card,
   CardContent,
@@ -9,32 +9,32 @@ import {
 import { Button } from '~/registry/ui/button'
 import { TextField, TextFieldInput, TextFieldLabel } from '~/registry/ui/text-field'
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader } from '@shadui/alert-dialog'
-import { AddLocation, UpdateLocation, DeleteLocation, GetLocations, LocationInfo } from '../utils/fetch'
-import { IconClock, IconDotsVertical, IconPlus, IconTrash } from '~/components/icons'
-import { Badge } from '~/registry/ui/badge'
+import { IconArrowRight, IconClock, IconDotsVertical, IconPlus, IconTrash } from '~/components/icons'
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from '@shadui/dialog'
 import ModeToggle from '../components/ModeToggle'
 import { Accessor } from 'solid-js'
 import { showToast } from '~/registry/ui/toast'
 import { Toaster } from '~/registry/ui/toast'
-
-const [geolocation, setGeolocation] = createSignal<{lat?: number, long?: number}>({})
+import { addRedirection, deleteRedirection, getRedirectionMapEntries, RedirectionInfo, site } from '../utils/fetch'
 
 function showErrorToast(e: Error) {
   showToast( {title: 'Error ' + e.name, description: e.message, variant: 'error', duration: 5000} )
 }
 
-function DialogueWithLocation(
-  location: Accessor<LocationInfo | null>,
-  setLocation: Setter<LocationInfo | null>,
-  onSubmit: (location: LocationInfo, stopLoading: () => void) => void,
+function DialogueWithRedirection(
+  redirection: Accessor<RedirectionInfo | null>,
+  setRedirection: Setter<RedirectionInfo | null>,
+  onSubmit: (location: RedirectionInfo, stopLoading: () => void) => PromiseLike<void>,
   submitName: string
 ) {
   let clipboardHandler: any
   const [loading, setLoading] = createSignal(false)
-  function setFine(key: keyof(LocationInfo), value: any) {
+  function setFine(key: keyof RedirectionInfo, value: any) {
     if (!value) return
-    setLocation({ ...location()!, [key]: value })
+    setRedirection((old: RedirectionInfo | null): RedirectionInfo => {
+      (old![key] as unknown) = value
+      return old!
+    })
   }
 
   const onpaste = (e: ClipboardEvent) => {
@@ -43,17 +43,7 @@ function DialogueWithLocation(
     navigator.clipboard.readText().then(text => {
       var err: Error | undefined = undefined;
       try {
-        const parsed = JSON.parse(text)
-        setFine('lat', parsed.lat)
-        setFine('long', parsed.long)
-        setFine('names', parsed.names)
-        setFine('misspellings', parsed.misspellings)
-        return
-      } catch (e) {err = e as Error}
-      try {
-        const coords = text.split(',').map(Number)
-        setFine('lat', coords[0])
-        setFine('long', coords[1])
+        setRedirection(JSON.parse(text) as RedirectionInfo)
         return
       } catch (e) {err = e as Error}
 
@@ -63,148 +53,105 @@ function DialogueWithLocation(
 
   const oncopy = (e: ClipboardEvent) => {
     e.stopPropagation()
-    navigator.clipboard.writeText(JSON.stringify(location()))
-  }
-
-  if (location()) {
-    setLocation(old => {
-      old!.lat = old!.lat ?? geolocation().lat ?? 0
-      old!.long = old!.long ?? geolocation().long ?? 0
-      return old
-    })
+    console.log(redirection())
+    navigator.clipboard.writeText(JSON.stringify(redirection()))
   }
 
   return (
-    <Dialog open={Boolean(location())} onOpenChange={() => setLocation(null)}>
+    <Dialog open={Boolean(redirection())} onOpenChange={() => setRedirection(null)}>
       <DialogContent
         ref={clipboardHandler}
         oncopy={oncopy}
         onpaste={onpaste}
       >
         <DialogHeader>
-          <h3>{submitName} Location</h3>
+          <h3>{submitName} Redirection</h3>
         </DialogHeader>
         <div>
           <TextField>
-            <TextFieldLabel>Location Name</TextFieldLabel>
+            <TextFieldLabel>From</TextFieldLabel>
             <TextFieldInput
-              placeholder='Location Name'
+              placeholder="/google"
               type='text'
-              value={location()?.names?.join(', ')}
-              onInput={(e) => {
-                setFine('names', (e.target as HTMLInputElement).value.split(',').map(s => s.trim()))
-              }
+              value={redirection()?.location}
+              onInput={(e) => { setFine('location', (e.target as HTMLInputElement).value) }
             }/>
           </TextField>
           <TextField>
-            <TextFieldLabel>Misspellings</TextFieldLabel>
+            <TextFieldLabel>Destination</TextFieldLabel>
             <TextFieldInput
-              placeholder='Misspellings'
+              placeholder="https://google.com"
               type='text'
-              value={location()?.misspellings?.join(', ')}
-              onInput={(e) => {
-                setFine('misspellings', (e.target as HTMLInputElement).value.split(',').map(s => s.trim()))
-              }
+              value={redirection()?.dest}
+              onInput={(e) => { setFine('dest', (e.target as HTMLInputElement).value) }
             }/>
           </TextField>
           <TextField>
-            <TextFieldLabel>Latitude</TextFieldLabel>
+            <TextFieldLabel>Lifetime (Seconds)</TextFieldLabel>
             <TextFieldInput
-              placeholder={String(geolocation().lat ?? 'Latitude')}
-              min={-90}
-              max={90}
-              value={location()?.lat ?? geolocation().lat}
-              type='number'
-              onInput={(e) => {
-                setFine('lat', (e.target as HTMLInputElement).valueAsNumber)
-              }
-            }/>
-          </TextField>
-          <TextField>
-            <TextFieldLabel>Longitude</TextFieldLabel>
-            <TextFieldInput
-              placeholder={String(geolocation().long ?? 'Longitude')}
-              min={-180}
-              max={180}
-              value={location()?.long ?? geolocation().long}
-              type='number'
-              onInput={(e) => {
-                setFine('long', (e.target as HTMLInputElement).valueAsNumber)
-              }
+              placeholder="Enter lifetime in seconds"
+              type="number"
+              value={redirection()?.deathat}
+              onInput={(e) => { setFine('deathat', (e.target as HTMLInputElement).valueAsNumber) }
             }/>
           </TextField>
         </div>
         <DialogFooter>
-          <Button onClick={() => setLocation(null)} disabled={loading()}>Cancel</Button>
+          <Button onClick={() => setRedirection(null)} disabled={loading()}>Cancel</Button>
           <Button
             onClick={(e) => {
               e.preventDefault()
               e.stopPropagation()
               setLoading(true)
-              onSubmit(location()!, () => setLoading(false))
+              onSubmit(redirection()!, () => setLoading(false))
             }}
             disabled={loading()}
           >
-            <Show when={loading()} fallback={submitName}><IconClock class='animate-spin size-6 p-0' /></Show>
+            <Show when={loading()} fallback={submitName}><IconClock class='animate-spin size-6 p-0'/></Show>
           </Button>
-
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-function ShowAddDialog({location, setLocation, setList}: {location: Accessor<LocationInfo | null>, setLocation: Setter<LocationInfo | null>, setList: Setter<LocationInfo[]>}) {
-  return DialogueWithLocation(location, setLocation, (l, stopLoading) => {
-    if (!l) return stopLoading()
-    if (!l.lat || !l.long) {
-      l.lat = geolocation().lat ?? (() => {throw new Error('No geolocation found')})()
-      l.long = geolocation().long ?? (() => {throw new Error('No geolocation found')})()
-    }
-
-    if (l.misspellings) l.misspellings.map(m => m.trim()).filter(m => m.length > 0)
-    if (l.names) l.names.map(n => n.trim()).filter(n => n.length > 0)
-
-    AddLocation(l).then(() => {
+function ShowAddDialog({location, setLocation, setList}: {location: Accessor<RedirectionInfo | null>, setLocation: Setter<RedirectionInfo | null>, setList: Setter<RedirectionInfo[]>}) {
+  return DialogueWithRedirection(location, setLocation, async (l, stopLoading) => {
+    try {
+      await addRedirection(l)
       setList(old => {
         old.push(l)
         return old
       })
-      showToast({title: 'Success', description: <>Location {l.names.join(', ')}({l.long}, {l.lat}) Added</>, variant: 'success', duration: 5000})
+      showToast({title: 'Success', description: <>Redirection from {l.location} to {l.dest} with lifetime {l.deathat} Added</>, variant: 'success', duration: 5000})
       setLocation(null)
-    }).catch(e => showToast(
-      {title: 'Error', description: e.message, variant: 'error', duration: 5000}
-    )).finally(stopLoading)
+    } catch (e) {
+      showErrorToast(e as Error)
+    } finally {
+      stopLoading()
+    }
   }, 'Add')
 }
 
-function ShowUpdateDialog({location, setLocation}: {location: Accessor<LocationInfo | null>, setLocation: Setter<LocationInfo | null>}) {
-  return DialogueWithLocation(location, setLocation, (l, stopLoading) => {
-    if (!l) return stopLoading()
-    if (!l.lat || !l.long) {
-      l.lat = geolocation().lat ?? (() => {throw new Error('No geolocation found')})()
-      l.long = geolocation().long ?? (() => {throw new Error('No geolocation found')})()
-    }
-
-    if (l.misspellings) l.misspellings.map(m => m.trim()).filter(m => m.length > 0)
-    if (l.names) l.names.map(n => n.trim()).filter(n => n.length > 0)
-
-    UpdateLocation(l).then(() => {
-      showToast({title: 'Success', description: <>Location {l.names.join(', ')}({l.long}, {l.lat}) Updated Successfully</>, variant: 'success', duration: 5000})
+function ShowUpdateDialog({location, setLocation}: {location: Accessor<RedirectionInfo | null>, setLocation: Setter<RedirectionInfo | null>}) {
+  return DialogueWithRedirection(location, setLocation, async (l, stopLoading) => {
+    try {
+      await deleteRedirection(l.location)
+      await addRedirection(l)
+      showToast({title: 'Success', description: <>Redirection from {l.location} to {l.dest} with lifetime {l.deathat} Updated to {l.dest} with lifetime {l.deathat}</>, variant: 'success', duration: 5000})
       setLocation(null)
-    }).catch(e => showToast(
-      {title: 'Error', description: e.message, variant: 'error', duration: 5000}
-    )).finally(stopLoading)
+
+    } catch (e) {
+      showErrorToast(e as Error)
+    } finally {
+      stopLoading()
+    }
   }, 'Update')
 }
 
-function AsBadges({keys, ...props}: {vals: string[]} extends any? any: any) {
-  return <For each={keys}>{key => <Badge {...props}>{key}</Badge>}</For>
-}
-
-function LocationList({list, setList}: {list: Accessor<LocationInfo[]>, setList: Setter<LocationInfo[]>}) {
-  const [deleteDialogue, setDeleteDialogue] = createSignal<LocationInfo | null>(null)
-  const [updateDialogue, setUpdateDialogue] = createSignal<LocationInfo | null>(null)
+function LocationList({list, setList}: {list: Accessor<RedirectionInfo[]>, setList: Setter<RedirectionInfo[]>}) {
+  const [deleteDialogue, setDeleteDialogue] = createSignal<RedirectionInfo | null>(null)
+  const [updateDialogue, setUpdateDialogue] = createSignal<RedirectionInfo | null>(null)
 
   return (
     <>
@@ -214,22 +161,22 @@ function LocationList({list, setList}: {list: Accessor<LocationInfo[]>, setList:
             <h3>Delete Location</h3>
           </AlertDialogHeader>
           <AlertDialogDescription>
-            Are you sure you want to delete ({deleteDialogue()?.lat}, {deleteDialogue()?.long})
-            <AsBadges keys={deleteDialogue()?.names} class='bg-muted/50 mr-1 text-foreground hover:bg-muted' />
-            <AsBadges keys={deleteDialogue()?.misspellings} class='bg-muted/50 mr-1 text-foreground hover:bg-muted' />
+            Are you sure you want to delete
+            {deleteDialogue()?.location}
+            <IconArrowRight class='stroke-foreground' />
+            {deleteDialogue()?.dest}
           </AlertDialogDescription>
           <AlertDialogFooter>
             <Button onClick={() => setDeleteDialogue(null)}>Cancel</Button>
             <Button
               class='bg-red-500 hover:bg-red-700'
               onClick={() => {
-                DeleteLocation(deleteDialogue()!.id).then(() => {
-                  const toDel = deleteDialogue()!
-                  setList(old => old.filter(l => l.id !== toDel.id))
-                  showToast({title: 'Deletion successful', description: <>Location {toDel.names.join(', ')}({toDel.long}, {toDel.lat}) Deleted</>, variant: 'success', duration: 5000})
+                deleteRedirection(deleteDialogue()!.location).then(() => {
+                  setList(old => old.filter(l => l.location !== deleteDialogue()!.location))
+                  showToast({title: 'Deletion successful', description: <>Redirection from {deleteDialogue()!.location} to {deleteDialogue()!.dest} with lifetime {deleteDialogue()!.deathat} Deleted</>, variant: 'success', duration: 5000})
                   setDeleteDialogue(null)
                 }).catch((e) => {
-                  showToast({title: 'Error', description: e.message, variant: 'error', duration: 5000})
+                  showErrorToast(e as Error)
                 })
               }}
               color='secondary'
@@ -245,25 +192,23 @@ function LocationList({list, setList}: {list: Accessor<LocationInfo[]>, setList:
       />
 
       <For each={list()?? []}>
-        {(location) => (
+        {(redirection) => (
           <span
             class='flex py-1 flex-col items-start gap-2 rounded-lg border p-3 mx-4 my-2 text-left text-sm transition-all'
           >
             <div class='flex w-full flex-col gap-1'>
               <div class='flex items-center'>
-                <span class='mr-3'>
-                  <TextField class='bg-muted/50 rounded-lg px-1 mb-1'> Lat: {location.lat.toFixed(4)} </TextField>
-                  <TextField class='bg-muted/50 rounded-lg px-1 mt-1'> Lon: {location.long.toFixed(4)} </TextField>
-                </span>
-                <AsBadges keys={location.names} class='bg-muted/50 mr-1 text-foreground hover:bg-muted' />
+                {site + redirection.location}
+                <IconArrowRight class='stroke-foreground' />
+                {redirection.dest}
                 <div class='ml-auto text-xs flex gap-1'>
                   <Button
                     class='bg-muted/50 hover:bg-blue-500/25 p-2 mr-2'
-                    onClick={() => setUpdateDialogue(location)}
+                    onClick={() => setUpdateDialogue(redirection)}
                   > <IconDotsVertical class='stroke-foreground' /> </Button>
                   <Button
                     class='bg-muted/50 hover:bg-red-500/25 p-2'
-                    onClick={() => setDeleteDialogue(location)}
+                    onClick={() => setDeleteDialogue(redirection)}
                   > <IconTrash class='stroke-foreground' /> </Button>
                 </div>
               </div>
@@ -276,32 +221,11 @@ function LocationList({list, setList}: {list: Accessor<LocationInfo[]>, setList:
 }
 
 export default function LocationManager() {
-  var watchId: number
-
-  createEffect(() => {
-    console.log(geolocation())
-  })
-
-  onMount(() => {
-    watchId = navigator.geolocation.watchPosition((w) => {
-      setGeolocation({
-        lat: w.coords.latitude,
-        long: w.coords.longitude,
-      })
-    }, (e) => {
-      showToast({title: 'Location Error', description: e.message, variant: 'error', duration: 5000})
-    }, { enableHighAccuracy: true })
-  })
-
-  onCleanup(() => {
-    navigator.geolocation.clearWatch(watchId)
-  })
-
   const [error, setError] = createSignal<string>('')
-  const [list, setList] = createSignal<LocationInfo[]>([], { equals: false })
-  const [addDialogue, setAddDialogue] = createSignal<LocationInfo | null>(null)
+  const [list, setList] = createSignal<RedirectionInfo[]>([], { equals: false })
+  const [addDialogue, setAddDialogue] = createSignal<RedirectionInfo | null>(null)
 
-  function updateLocationsList() { GetLocations().then(setList).catch(setError) }
+  function updateLocationsList() { getRedirectionMapEntries(0, 1024).then(setList).catch(setError) }
   updateLocationsList()
 
   return (
@@ -316,16 +240,13 @@ export default function LocationManager() {
         <CardHeader>
           <div class='flex flex-row items-center'>
             <div class='mr-auto'>
-              <CardTitle>Locations</CardTitle>
-              <CardDescription>Manage your locations</CardDescription>
+              <CardTitle>Redirections</CardTitle>
+              <CardDescription>Manage your redirections</CardDescription>
             </div>
-            <span class='absolute top-1 left-1/2 -translate-x-1/2 text-foreground p-2 rounded py-1 px-2 border border-grey-500/50 bg-muted/50 text-sm max-sm:text-xs break-keep max-sm:p-0'>
-              {geolocation().lat?.toFixed(7)}, {geolocation().long?.toFixed(7)}
-            </span>
             <div class='mr-[-1rem] mt-[-2rem] flex flex-row items-center gap-2'>
               <div
                 class='hover:bg-green-500/25 mr-2 size-9 cursor-pointer flex items-center justify-center rounded transition border border-green-500/25 animate-pulse'
-                onClick={() => setAddDialogue({} as LocationInfo)}
+                onClick={() => setAddDialogue({} as RedirectionInfo)}
               > <IconPlus class='stroke-foreground' /> </div>
               <ModeToggle/>
             </div>

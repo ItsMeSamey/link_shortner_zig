@@ -1,6 +1,6 @@
 import { openDB, IDBPDatabase } from 'idb'
 import { MapEntry, Modification, ModificationType } from './fetch'
-import { getStorageItem } from './storageItem'
+import { getStorageItem } from './stateManagement'
 
 type dbType = IDBPDatabase<{
   redirections: {
