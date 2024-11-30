@@ -2,7 +2,7 @@ const std = @import("std");
 const posix = std.posix;
 
 // fd of Socket that is listening
-sock: i32,
+sock: posix.socket_t,
 
 const Server = @This();
 
@@ -14,12 +14,12 @@ pub fn init(comptime ip: [4]u8, comptime port: u16) !Server {
     .port = std.mem.nativeToBig(u16, port),
   });
 
-  const sock: i32 = @intCast(try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0));
+  const sock = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
   if (sock == 0) {
     std.debug.print("socket failed\n", .{});
     return error.SocketError;
   }
-  errdefer _ = posix.close(sock);
+  errdefer posix.close(sock);
 
   // Make the socket reusable
   try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(u32, 1)));
@@ -35,7 +35,7 @@ const AcceptResponse = struct{
   request: []u8,
 
   pub fn close(conn: *const @This()) void {
-    _ = posix.close(conn.client);
+    posix.close(conn.client);
   }
 
   pub fn responseWriter(self: *const @This()) @import("responseWriter.zig") {
@@ -58,7 +58,7 @@ const AcceptResponse = struct{
 pub fn accept(self: *Server, buf: []u8) !AcceptResponse {
   const client = try posix.accept(self.sock, null, null, 0);
   if (client < 0) return error.AcceptError;
-  errdefer _ = posix.close(client);
+  errdefer posix.close(client);
 
   const n = try posix.read(client, buf[0..]);
   return .{ .client = client, .request = buf[0..n] };
@@ -66,6 +66,6 @@ pub fn accept(self: *Server, buf: []u8) !AcceptResponse {
 
 // Deinit the server
 pub fn deinit(self: *Server) void {
-  _ = posix.close(self.sock);
+  posix.close(self.sock);
 }
 

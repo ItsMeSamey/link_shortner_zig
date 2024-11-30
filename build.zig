@@ -1,66 +1,94 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
-// Although this function looks imperative, note that its job is to
-// declaratively construct a build graph that will be executed by an external
-// runner.
+fn existsBin(binName: []const u8) bool {
+  const path = std.posix.getenvZ("PATH") orelse return false;
+  var pathBuf: [std.posix.system.PATH_MAX]u8 = undefined;
+  var iter = std.mem.tokenizeScalar(u8, path, ':');
+
+  while (iter.next()) |pathFrgment| {
+    if (pathFrgment.len == 0) continue;
+    var from: usize = 0;
+
+    if (pathBuf.len < pathFrgment.len + 1 + binName.len + 1) return false;
+
+    @memcpy(pathBuf[from..][0..pathFrgment.len], pathFrgment);
+    from += pathFrgment.len;
+    if (pathFrgment[pathFrgment.len - 1] != '/') {
+      pathBuf[from] = '/';
+      from += 1;
+    }
+    @memcpy(pathBuf[from..][0..binName.len], binName);
+    from += binName.len;
+    pathBuf[from] = 0;
+
+    std.posix.accessZ(@as([*:0]const u8, @ptrCast(&pathBuf)), std.posix.X_OK) catch continue;
+    return true;
+  }
+
+  return false;
+}
+
 pub fn build(b: *std.Build) void {
-  // Standard target options allows the person running `zig build` to choose
-  // what target to build for. Here we do not override the defaults, which
-  // means any target is allowed, and the default is native. Other options
-  // for restricting supported target set are available.
   const target = b.standardTargetOptions(.{});
+  const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSafe });
 
-  // Standard optimization options allow the person running `zig build` to select
-  // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-  // set a preferred release mode, allowing the user to decide how to optimize.
-  const optimize = b.standardOptimizeOption(.{});
+  // install dependencies step
+  const installDepsNpm = b.addSystemCommand(&.{ "npm", "install" });
+  installDepsNpm.setCwd(.{ .src_path = .{ .owner = b, .sub_path = "frontend" } });
+  b.step("install_deps_npm", "Install npm dependencies").dependOn(&installDepsNpm.step);
 
+  const installDepsBun = b.addSystemCommand(&.{ "bun", "install" });
+  installDepsBun.setCwd(.{ .src_path = .{ .owner = b, .sub_path = "frontend" } });
+  b.step("install_deps_bun", "Install bun dependencies").dependOn(&installDepsBun.step);
+
+  const installDepsAuto = b.step("install_deps", "Install dependencies, automatiaclly detect if bun or npm is in path (bun is preferred)");
+  const buildFrontend = b.step("build_frontend", "Build the frontend using npm and vite");
+
+  if (existsBin("bun")) {
+    installDepsAuto.dependOn(&installDepsBun.step);
+
+    const vite = b.addSystemCommand(&.{ "bunx", "vite", "build" });
+    vite.setCwd(.{ .src_path = .{ .owner = b, .sub_path = "frontend" } });
+    buildFrontend.dependOn(&vite.step);
+  } else if (existsBin("npm")) {
+    installDepsAuto.dependOn(&installDepsNpm.step);
+
+    const vite = b.addSystemCommand(&.{ "npx", "vite", "build" });
+    vite.setCwd(.{ .src_path = .{ .owner = b, .sub_path = "frontend" } });
+    buildFrontend.dependOn(&vite.step);
+  } else {
+    const failStep = b.addFail("No package manager found in PATH, please install bun or npm");
+    installDepsAuto.dependOn(&failStep.step);
+    buildFrontend.dependOn(&failStep.step);
+  }
+
+
+  // build backend Step
   const exe = b.addExecutable(.{
     .name = "backend",
     .root_source_file = b.path("backend/main.zig"),
     .target = target,
     .optimize = optimize,
   });
-
-  // This declares intent for the executable to be installed into the
-  // standard location when the user invokes the "install" step (the default
-  // step when running `zig build`).
+  exe.step.dependOn(buildFrontend);
   b.installArtifact(exe);
+  b.step("build", "Build the frontend and install the backend").dependOn(&exe.step);
 
-  // This *creates* a Run step in the build graph, to be executed when another
-  // step is evaluated that depends on it. The next line below will establish
-  // such a dependency.
+  // run step
   const run_cmd = b.addRunArtifact(exe);
-
-  // By making the run step depend on the install step, it will be run from the
-  // installation directory rather than directly from within the cache directory.
-  // This is not necessary, however, if the application depends on other installed
-  // files, this ensures they will be present and in the expected location.
   run_cmd.step.dependOn(b.getInstallStep());
-
-  // This allows the user to pass arguments to the application in the build
-  // command itself, like this: `zig build run -- arg1 arg2 etc`
-  if (b.args) |args| {
-    run_cmd.addArgs(args);
-  }
-
-  // This creates a build step. It will be visible in the `zig build --help` menu,
-  // and can be selected like this: `zig build run`
-  // This will evaluate the `run` step rather than the default, which is "install".
-  const run_step = b.step("run", "Run the app");
+  const run_step = b.step("run", "Run the application");
   run_step.dependOn(&run_cmd.step);
 
+  // test step
   const exe_unit_tests = b.addTest(.{
     .root_source_file = b.path("backend/main.zig"),
     .target = target,
     .optimize = optimize,
   });
-
   const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
-
-  // Similar to creating the run step earlier, this exposes a `test` step to
-  // the `zig build --help` menu, providing a way for the user to request
-  // running the unit tests.
   const test_step = b.step("test", "Run unit tests");
   test_step.dependOn(&run_exe_unit_tests.step);
 }
+
