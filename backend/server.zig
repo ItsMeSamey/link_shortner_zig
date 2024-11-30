@@ -66,6 +66,7 @@ const AcceptResponse = struct{
           const written = linux.write(@as(@TypeOf(client_self), @ptrCast(@alignCast(context))).client, data.ptr, data.len);
           if (written == 0) return error.Closed;
           if (@as(isize, @bitCast(written)) < 0) return error.WriteError;
+          std.debug.assert(written < 1 << 16);
           return written;
         }
       }.write,

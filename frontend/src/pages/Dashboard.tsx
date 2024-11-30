@@ -52,8 +52,8 @@ function DialogueWithRedirection(
   }
 
   const oncopy = (e: ClipboardEvent) => {
+    if ((e.target as HTMLElement).nodeName === 'INPUT') return
     e.stopPropagation()
-    console.log(redirection())
     navigator.clipboard.writeText(JSON.stringify(redirection()))
   }
 
@@ -102,6 +102,36 @@ function DialogueWithRedirection(
             onClick={(e) => {
               e.preventDefault()
               e.stopPropagation()
+
+              const old = redirection()
+              if (!old) {
+                showErrorToast(new Error('All Fields are required'))
+                return
+              }
+              if (old.location.startsWith(site)) {
+                old.location = old.location.slice(site.length)
+              } else if (old.location[0] == '/') {
+                old.location = old.location.slice(1)
+              }
+
+              if (old.location.startsWith('http')) {
+              showErrorToast(new Error('Invalid from, location must not include the domain'))
+                return
+              }
+
+              if (!old.dest.startsWith('http') && !old.dest.includes('://')) old.dest = 'http://' + old.dest
+
+              if (!old.location) {
+                showErrorToast(new Error('All Fields are required'))
+                return
+              } else if (!old.dest) {
+                showErrorToast(new Error('To location is required'))
+                return
+              } else if (!(old.deathat > 0)) {
+                showErrorToast(new Error('Lifetime must be greater than 0'))
+                return
+              }
+
               setLoading(true)
               onSubmit(redirection()!, () => setLoading(false))
             }}

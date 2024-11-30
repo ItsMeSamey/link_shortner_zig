@@ -48,7 +48,7 @@ export async function addRedirection({location, dest, deathat}: RedirectionInfo)
     headers: {
       auth: loginData.get()!.auth,
       dest,
-      deathat,
+      death: deathat,
     } as unknown  as HeadersInit,
   })
 

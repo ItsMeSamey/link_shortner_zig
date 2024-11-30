@@ -23,42 +23,37 @@ pub fn ChunkWriter(comptime bufLen: usize, comptime WriterType: type) type {
     end: usize = 0,
 
     pub const Error = WriterType.Error;
-    pub const Writer = std.io.Writer(*@This(), Error, write);
 
+    fn flushBuffer(self: *const @This(), buffer: []const u8) !void {
+      try std.fmt.format(self.unbuffered, "{x}\r\n{s}\r\n", .{ buffer.len, buffer });
+    }
     fn flush(self: *@This()) !void {
-      try std.fmt.format(self.unbuffered, "{x}\r\n{s}\r\n", .{ self.end, self.buf[0..self.end] });
+      try self.flushBuffer(self.buf[0..self.end]);
       self.end = 0;
     }
-
-    fn writer(self: *@This()) Writer {
-      return .{ .context = self };
+    pub fn finish(self: *@This()) !void {
+      try self.flush();
+      try std.fmt.format(self.unbuffered, "0\r\n\r\n", .{});
     }
 
     pub fn any(self: *@This()) std.io.AnyWriter {
-      return self.writer().any();
+      const Writer = std.io.Writer(*@This(), Error, write);
+      return (Writer{ .context = self }).any();
     }
 
-    fn write(self: *@This(), bytes: []const u8) Error!usize {
-      if (self.end + bytes.len > self.buf.len) {
-        try self.flush();
-        if (bytes.len > self.buf.len)
-          return self.unbuffered.write(bytes);
+    pub fn write(self: *@This(), bytes: []const u8) Error!usize {
+      if (self.end + bytes.len > bufLen) {
+        try std.fmt.format(self.unbuffered, "{x}\r\n{s}{s}\r\n", .{ self.end + bytes.len, self.buf[0..self.end], bytes });
+        self.end = 0;
       }
-
-      const nEnd = self.end + bytes.len;
-      @memcpy(self.buf[self.end..nEnd], bytes);
-      self.end = nEnd;
+      @memcpy(self.buf[self.end..][0..bytes.len], bytes);
+      self.end += bytes.len;
       return bytes.len;
     }
 
     pub fn init(unbuffered: WriterType) !@This() {
       try std.fmt.format(unbuffered, FormatString ++ "Transfer-Encoding:chunked\r\n\r\n", .{ 200 });
       return .{ .unbuffered = unbuffered };
-    }
-
-    pub fn finish(self: *@This()) !void {
-      try self.flush();
-      try std.fmt.format(self.unbuffered, "0\r\n\r\n", .{});
     }
   };
 }
@@ -68,6 +63,10 @@ pub fn writeRedirection(self: *const Self, redirection: []const u8) !void {
 }
 
 pub fn writeError(self: *const Self, comptime code: u16) !void {
+  const trace = @errorReturnTrace();
+  if (trace) |t| {
+    try t.format("Error {}", .{}, std.io.getStdOut());
+  }
   try std.fmt.format(self.writer, FormatString ++ "Connection:close\r\n\r\n", .{ code });
 }
 
@@ -82,11 +81,11 @@ pub fn writeMapIterator(self: *const Self, iter: *ReidrectionMap.Map.Iterator, c
 
   while (iter.next()) |val| {
     try std.fmt.format(anyChunkWriter, "{d}\x00{s}\x00{s}\n", .{val.key_ptr.deathat, val.key_ptr.location(), val.key_ptr.dest()});
-
     done += 1;
     if (done == count) break;
   }
 
+  try std.fmt.format(anyChunkWriter, "{x}\n", .{ iter.index });
   try chunkWriter.finish();
 }
 
@@ -101,6 +100,7 @@ pub fn writeMapModificationIterator(self: *const @This(), iter: *@import("redire
     }
   }
 
+  try std.fmt.format(anyChunkWriter, "{x}\n", .{ iter.index });
   try chunkWriter.finish();
 }
 
