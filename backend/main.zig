@@ -1,6 +1,4 @@
 const std = @import("std");
-const linux = std.os.linux;
-const TagType = @TypeOf(.enum_literal);
 const Server = @import("server.zig");
 const ReidrectionMap = @import("redirectionMap.zig");
 const ResponseWriter = @import("responseWriter.zig");
@@ -14,8 +12,6 @@ const auth = env.get("AUTH").?;
 
 // The main function to start the server
 pub fn main() !void {
-  comptime if (@import("builtin").os.tag != .linux) @compileError("Only Linux is supported");
-
   server = try Server.init(.{ 0, 0, 0, 0 }, 8080);
 
   var gpa = std.heap.GeneralPurposeAllocator(.{}){};
