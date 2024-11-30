@@ -191,12 +191,12 @@ export async function getModificationsAfterIndex(index: number): Promise<{entrie
   return parseModification(await response.text())
 }
 
-(globalThis as any).fetchingFunctions = [
+(globalThis as any).fetchingFunctions = {
   addRedirection,
   deleteRedirection,
   getRedirectionMapCount,
   getRedirectionMapEntries,
   getOldestModificationIndex,
   getModificationsAfterIndex,
-]
+}
 

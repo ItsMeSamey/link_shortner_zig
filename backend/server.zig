@@ -45,7 +45,8 @@ pub fn init(comptime ip: [4]u8, comptime port: u16) !Server {
   return .{ .sock = sock };
 }
 
-const AccptResponse = struct{
+// Struct returned on accepting connection
+const AcceptResponse = struct{
   client: i32,
   request: []u8,
 
@@ -73,7 +74,7 @@ const AccptResponse = struct{
 };
 
 // Wait for accept and return the client and request
-pub fn accept(self: *Server, buf: []u8) !AccptResponse {
+pub fn accept(self: *Server, buf: []u8) !AcceptResponse {
   const client: i32 = @intCast(linux.accept(self.sock, null, null));
   if (client < 0) return error.AcceptError;
   errdefer _ = linux.close(client);

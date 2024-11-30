@@ -15,7 +15,6 @@ import { Setter } from 'solid-js'
 import { IconArrowRight, IconCopy, IconExternalLink, IconMinus, IconPlus } from '../components/icons'
 import { Flex } from '../components/ui/flex'
 
-
 function AddRedirection() {
   const [error, setError] = createSignal<string | null>(null)
   const [success, setSuccess] = createSignal<string | null>(null)

@@ -36,7 +36,7 @@ pub fn main() !void {
   }
 }
 
-const allowedMethods = "~~~0,~~~1,~~~2,~~~3,GET,POST,OPTIONS";
+const allowedMethods = "GET,POST,OPTIONS,~~~0,~~~1,~~~2,~~~3";
 const allowedHeaders = "auth,dest,death";
 const corsResponse = "HTTP/1.1 200\r\nAccess-Control-Allow-Origin:*\r\nAccess-Control-Allow-Methods:" ++ allowedMethods ++ "\r\nAccess-Control-Allow-Headers:" ++ allowedHeaders ++ "\r\nConnection:close\r\n\r\n";
 
@@ -166,6 +166,7 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
       },
       else => {},
     }
+    return responseWriter.writeError(404);
   }
 
   // Veriy auth header
@@ -204,7 +205,6 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
     },
     else => {},
   }
-
   return responseWriter.writeError(404);
 }
 
