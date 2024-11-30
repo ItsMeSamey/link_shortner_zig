@@ -17,6 +17,22 @@ export default function Login({sP}: {sP: Setter<string>}) {
 
   var keepLooping = true
   const text = 'Login to the admin panel';
+  function getRandomEmoji() {
+    const emojiRanges = [
+      [0x1F600, 0x1F64F],  // Emoticons
+      [0x1F680, 0x1F6FF],  // Transport and map symbols
+      [0x1F700, 0x1F77F],  // Alchemical symbols
+      [0x1F780, 0x1F7FF],  // Geometric Shapes
+      [0x1F800, 0x1F8FF],  // Supplemental Arrows-C
+      [0x1F900, 0x1F9FF],  // Supplemental Symbols and Pictographs
+      [0x1F600, 0x1F64F],  // Faces (repeat for more diversity)
+      [0x1F300, 0x1F5FF],  // Miscellaneous Symbols and Pictographs
+    ];
+
+    const range = emojiRanges[Math.floor(Math.random() * emojiRanges.length)];
+    const emojiCodePoint = Math.floor(Math.random() * (range[1] - range[0] + 1)) + range[0];
+    return String.fromCodePoint(emojiCodePoint);
+  }
 
   onCleanup(() => { keepLooping = false })
   onMount(() => {
@@ -31,7 +47,7 @@ export default function Login({sP}: {sP: Setter<string>}) {
         } else if (index == text.length && increasing) {
           setTimeout(() => {
             updateLoginText(index, false)
-          }, 4000)
+          }, 2500)
         }
       } else {
         if (index > 1) {
@@ -39,7 +55,7 @@ export default function Login({sP}: {sP: Setter<string>}) {
             updateLoginText(index - 1, false)
           }, 50/Math.sqrt(text.length))
         } else {
-          setLoginText('😊')
+          setLoginText(getRandomEmoji())
           setTimeout(() => {
             updateLoginText(index + 1)
           }, 1000)
