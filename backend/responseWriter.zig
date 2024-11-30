@@ -8,27 +8,22 @@ const Header = struct {
   v: []const u8,
 };
 
-writer: std.io.AnyWriter,
-
 const FormatString = "HTTP/1.1 {d}\r\nAccess-Control-Allow-Origin:*\r\n";
 
-fn writeChunk(self: *const Self, chunk: []const u8) !void {
-  return std.fmt.format(self.writer, "{x}\r\n{s}\r\n", .{ chunk.len, chunk });
-}
+writer: std.io.AnyWriter,
 
-pub fn ChunkWriter(comptime bufLen: usize, comptime WriterType: type) type {
+const ChunkedWriterType = GetChunkWriter(1 << 14, std.io.AnyWriter);
+pub fn GetChunkWriter(comptime bufLen: usize, comptime WriterType: type) type {
   return struct {
     unbuffered: WriterType,
     buf: [bufLen]u8 = undefined,
     end: usize = 0,
 
     pub const Error = WriterType.Error;
+    const Writer = std.io.Writer(*@This(), Error, write);
 
-    fn flushBuffer(self: *const @This(), buffer: []const u8) !void {
-      try std.fmt.format(self.unbuffered, "{x}\r\n{s}\r\n", .{ buffer.len, buffer });
-    }
     fn flush(self: *@This()) !void {
-      try self.flushBuffer(self.buf[0..self.end]);
+      try std.fmt.format(self.unbuffered, "{x}\r\n{s}\r\n", .{ self.end, self.buf[0..self.end] });
       self.end = 0;
     }
     pub fn finish(self: *@This()) !void {
@@ -36,18 +31,18 @@ pub fn ChunkWriter(comptime bufLen: usize, comptime WriterType: type) type {
       try std.fmt.format(self.unbuffered, "0\r\n\r\n", .{});
     }
 
-    pub fn any(self: *@This()) std.io.AnyWriter {
-      const Writer = std.io.Writer(*@This(), Error, write);
-      return (Writer{ .context = self }).any();
+    pub fn writer(self: *@This()) Writer {
+      return .{ .context = self };
     }
 
     pub fn write(self: *@This(), bytes: []const u8) Error!usize {
       if (self.end + bytes.len > bufLen) {
         try std.fmt.format(self.unbuffered, "{x}\r\n{s}{s}\r\n", .{ self.end + bytes.len, self.buf[0..self.end], bytes });
         self.end = 0;
+      } else {
+        @memcpy(self.buf[self.end..][0..bytes.len], bytes);
+        self.end += bytes.len;
       }
-      @memcpy(self.buf[self.end..][0..bytes.len], bytes);
-      self.end += bytes.len;
       return bytes.len;
     }
 
@@ -75,10 +70,11 @@ pub fn writeString(self: *const Self, data: []const u8 ) !void {
 }
 
 pub fn writeMapIterator(self: *const Self, iter: *ReidrectionMap.Map.Iterator, count: u32) !void {
-  var chunkWriter = try ChunkWriter(1 << 14, @TypeOf(self.writer)).init(self.writer);
-  const anyChunkWriter = chunkWriter.any();
-  var done: u32 = 0;
+  var chunkWriter = try ChunkedWriterType.init(self.writer);
+  var genericChunkWriter = chunkWriter.writer();
+  const anyChunkWriter = genericChunkWriter.any();
 
+  var done: u32 = 0;
   while (iter.next()) |val| {
     try std.fmt.format(anyChunkWriter, "{d}\x00{s}\x00{s}\n", .{val.key_ptr.deathat, val.key_ptr.location(), val.key_ptr.dest()});
     done += 1;
@@ -90,8 +86,9 @@ pub fn writeMapIterator(self: *const Self, iter: *ReidrectionMap.Map.Iterator, c
 }
 
 pub fn writeMapModificationIterator(self: *const @This(), iter: *@import("redirectionMap.zig").CircularOverwritingList.Iterator) !void {
-  var chunkWriter = try ChunkWriter(1 << 14, @TypeOf(self.writer)).init(self.writer);
-  const anyChunkWriter = chunkWriter.any();
+  var chunkWriter = try ChunkedWriterType.init(self.writer);
+  var genericChunkWriter = chunkWriter.writer();
+  const anyChunkWriter = genericChunkWriter.any();
 
   while (iter.next()) |val| {
     switch (val.modification) {
@@ -100,7 +97,6 @@ pub fn writeMapModificationIterator(self: *const @This(), iter: *@import("redire
     }
   }
 
-  try std.fmt.format(anyChunkWriter, "{x}\n", .{ iter.index });
   try chunkWriter.finish();
 }
 

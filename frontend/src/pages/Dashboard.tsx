@@ -38,14 +38,16 @@ function DialogueWithRedirection(
   }
 
   const onpaste = (e: ClipboardEvent) => {
-    if ((e.target as HTMLElement).nodeName === 'INPUT') return
-    e.stopPropagation()
+    if ((e.target as HTMLElement).nodeName !== 'INPUT') e.stopPropagation()
+
     navigator.clipboard.readText().then(text => {
       var err: Error | undefined = undefined;
       try {
         setRedirection(JSON.parse(text) as RedirectionInfo)
         return
       } catch (e) {err = e as Error}
+
+      if ((e.target as HTMLElement).nodeName === 'INPUT') return
 
       showErrorToast(err)
     })
