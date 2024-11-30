@@ -24,7 +24,7 @@ function showErrorToast(e: Error) {
 function DialogueWithRedirection(
   redirection: Accessor<RedirectionInfo | null>,
   setRedirection: Setter<RedirectionInfo | null>,
-  onSubmit: (location: RedirectionInfo, stopLoading: () => void) => PromiseLike<void>,
+  onSubmit: (redirection: RedirectionInfo, stopLoading: () => void) => PromiseLike<void>,
   submitName: string
 ) {
   let clipboardHandler: any
@@ -147,8 +147,8 @@ function DialogueWithRedirection(
   )
 }
 
-function ShowAddDialog({location, setLocation, setList}: {location: Accessor<RedirectionInfo | null>, setLocation: Setter<RedirectionInfo | null>, setList: Setter<RedirectionInfo[]>}) {
-  return DialogueWithRedirection(location, setLocation, async (l, stopLoading) => {
+function ShowAddDialog({redirection, setRedirection, setList}: {redirection: Accessor<RedirectionInfo | null>, setRedirection: Setter<RedirectionInfo | null>, setList: Setter<RedirectionInfo[]>}) {
+  return DialogueWithRedirection(redirection, setRedirection, async (l, stopLoading) => {
     try {
       await addRedirection(l)
       setList(old => {
@@ -156,7 +156,7 @@ function ShowAddDialog({location, setLocation, setList}: {location: Accessor<Red
         return old
       })
       showToast({title: 'Success', description: <>Redirection from {l.location} to {l.dest} with lifetime {l.deathat} Added</>, variant: 'success', duration: 5000})
-      setLocation(null)
+      setRedirection(null)
     } catch (e) {
       showErrorToast(e as Error)
     } finally {
@@ -165,13 +165,13 @@ function ShowAddDialog({location, setLocation, setList}: {location: Accessor<Red
   }, 'Add')
 }
 
-function ShowUpdateDialog({location, setLocation}: {location: Accessor<RedirectionInfo | null>, setLocation: Setter<RedirectionInfo | null>}) {
-  return DialogueWithRedirection(location, setLocation, async (l, stopLoading) => {
+function ShowUpdateDialog({redirection, setRedirection}: {redirection: Accessor<RedirectionInfo | null>, setRedirection: Setter<RedirectionInfo | null>}) {
+  return DialogueWithRedirection(redirection, setRedirection, async (l, stopLoading) => {
     try {
       await deleteRedirection(l.location)
       await addRedirection(l)
       showToast({title: 'Success', description: <>Redirection from {l.location} to {l.dest} with lifetime {l.deathat} Updated to {l.dest} with lifetime {l.deathat}</>, variant: 'success', duration: 5000})
-      setLocation(null)
+      setRedirection(null)
 
     } catch (e) {
       showErrorToast(e as Error)
@@ -181,7 +181,7 @@ function ShowUpdateDialog({location, setLocation}: {location: Accessor<Redirecti
   }, 'Update')
 }
 
-function LocationList({list, setList}: {list: Accessor<RedirectionInfo[]>, setList: Setter<RedirectionInfo[]>}) {
+function RedirectionList({list, setList}: {list: Accessor<RedirectionInfo[]>, setList: Setter<RedirectionInfo[]>}) {
   const [deleteDialogue, setDeleteDialogue] = createSignal<RedirectionInfo | null>(null)
   const [updateDialogue, setUpdateDialogue] = createSignal<RedirectionInfo | null>(null)
 
@@ -190,7 +190,7 @@ function LocationList({list, setList}: {list: Accessor<RedirectionInfo[]>, setLi
       <AlertDialog open={Boolean(deleteDialogue())}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <h3>Delete Location</h3>
+            <h3>Delete Redirection</h3>
           </AlertDialogHeader>
           <AlertDialogDescription>
             Are you sure you want to delete
@@ -219,8 +219,8 @@ function LocationList({list, setList}: {list: Accessor<RedirectionInfo[]>, setLi
         </AlertDialogContent>
       </AlertDialog>
       <ShowUpdateDialog
-        location={updateDialogue}
-        setLocation={setUpdateDialogue}
+        redirection={updateDialogue}
+        setRedirection={setUpdateDialogue}
       />
 
       <For each={list()?? []}>
@@ -252,7 +252,7 @@ function LocationList({list, setList}: {list: Accessor<RedirectionInfo[]>, setLi
   )
 }
 
-export default function LocationManager() {
+export default function RedirectionManager() {
   const [list, setList] = createSignal<RedirectionInfo[]>([], { equals: false })
   const [addDialogue, setAddDialogue] = createSignal<RedirectionInfo | null>(null)
 
@@ -270,8 +270,8 @@ export default function LocationManager() {
     <>
       <Toaster draggable={true} />
       <ShowAddDialog
-        location={addDialogue}
-        setLocation={setAddDialogue}
+        redirection={addDialogue}
+        setRedirection={setAddDialogue}
         setList={setList}
       />
       <Card>
@@ -291,7 +291,7 @@ export default function LocationManager() {
           </div>
         </CardHeader>
         <CardContent>
-          <LocationList list={list} setList={setList}/>
+          <RedirectionList list={list} setList={setList}/>
         </CardContent>
       </Card>
     </>

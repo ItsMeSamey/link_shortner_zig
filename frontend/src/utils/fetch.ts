@@ -5,11 +5,6 @@ export const site = 'http://127.0.0.1:8080/'
 export const loginData = getStorageItem<{method: string, auth: string}>("!Auth", JSON.stringify, JSON.parse)
 const methodHash = 'a03f2fd631370334952c5db487ce810e6af747de720ed7a05543a4c1204d3998'
 
-export const modificationIndex = getStorageItem<number>("!ModificationIndex", String, Number)
-if (modificationIndex.get() === null) {
-  getOldestModificationIndex().then(modificationIndex.set).catch(console.error)
-}
-
 // Hashes a string using SHA-256
 async function hash(val: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -111,6 +106,19 @@ export async function getRedirectionMapEntries(from: number, count: number): Pro
 export async function getOldestModificationIndex(): Promise<number> {
   const response = await fetch(site, {
     method: loginData.get()!.method + '1',
+    headers: { auth: loginData.get()!.auth },
+  })
+
+  if (response.status !== 200) throw new Error('Server error ' + String(response.status))
+  return Number(await response.text())
+}
+
+// Returns the oldest modification date of the site
+//
+// @throws Error if the server returns an error
+export async function getLatestModificationIndex(): Promise<number> {
+  const response = await fetch(site, {
+    method: loginData.get()!.method + '2',
     headers: { auth: loginData.get()!.auth },
   })
 

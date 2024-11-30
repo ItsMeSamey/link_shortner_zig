@@ -1,11 +1,20 @@
 import { openDB, IDBPDatabase } from 'idb'
-import { MapEntry, Modification, ModificationType } from './fetch'
+import {
+  RedirectionInfo,
+  Modification,
+  ModificationType,
+  getLatestModificationIndex,
+  getModificationsAfterIndex,
+  getRedirectionMapCount,
+  getRedirectionMapEntries,
+  getOldestModificationIndex
+} from './fetch'
 import { getStorageItem } from './stateManagement'
 
 type dbType = IDBPDatabase<{
   redirections: {
     key: 'location',
-    value: MapEntry,
+    value: RedirectionInfo,
     indexes?: ['destIndex', 'deathatIndex'],
   }
 }>
@@ -54,5 +63,53 @@ export async function applyModifications(modifications: Modification[]) {
   }
 
   await Promise.all(promises)
+}
+
+const latestModificationIndex = getStorageItem<number>("!LatestModificationIndex", String, Number, 0)
+async function mustAddAllRedirectionsToDb(): Promise<void> {
+  const db = await getDb()
+
+  const mindex = await getLatestModificationIndex();
+  const count = await getRedirectionMapCount()
+  if (count == 0) return;
+  for (let i = 0; i < count; i += 1024) {
+    const redirections = await getRedirectionMapEntries(i, 1024)
+    const os = db.transaction('redirections', 'readwrite').objectStore('redirections')
+    for (let j = 0; j < redirections.entries.length; j++) {
+      await os.add(redirections.entries[j])
+    }
+  }
+
+  const newMindex = await getLatestModificationIndex()
+  if (newMindex > mindex) {
+    const modifications = await getModificationsAfterIndex(mindex)
+    await applyModifications(modifications.entries)
+  }
+
+  latestModificationIndex.set(newMindex)
+}
+
+async function refreshRedirectionRecord(): Promise<void> {
+  const idx = await getLatestModificationIndex()
+
+  if (idx == 0) {
+    await mustAddAllRedirectionsToDb()
+  } else if (idx > latestModificationIndex.get()!) {
+    const oldestIndex = await getOldestModificationIndex()
+    if (oldestIndex > latestModificationIndex.get()!) {
+      await mustAddAllRedirectionsToDb()
+    } else {
+      const modifications = await getModificationsAfterIndex(latestModificationIndex.get()!)
+      await applyModifications(modifications.entries)
+      latestModificationIndex.set(idx)
+    }
+  }
+}
+
+export async function getAllRedirectionsDb(): Promise<RedirectionInfo[]> {
+  await refreshRedirectionRecord()
+
+  const db = await getDb()
+  return await db.transaction('redirections').objectStore('redirections').getAll()
 }
 

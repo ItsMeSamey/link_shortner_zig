@@ -183,20 +183,15 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
       try responseWriter.writeString(buf[0..len]);
     },
     '1' => {
-      // getOldestModificationDate
+      // getOldestModificationIndex
 
-      var buf: [20]u8 = undefined;
-      var index: u64 = undefined;
-      if (rmap.modification.getOldest()) |entry| {
-        index = entry.index;
-      } else {
-        index = 0;
-      }
-
-      const len = std.fmt.formatIntBuf(buf[0..], index, 10, .lower, .{});
-      try responseWriter.writeString(buf[0..len]);
+      try std.fmt.format(responseWriter.writer, "{x}", .{ if (rmap.modification.getOldest()) |e| e.index else 0 });
     },
-    '2' => {},
+    '2' => {
+      // getLatestModificationIndex
+
+      try std.fmt.format(responseWriter.writer, "{x}", .{ ReidrectionMap.modificationIndex });
+    },
     '3' => {
       // getAllModifications
 
