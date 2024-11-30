@@ -1,5 +1,5 @@
-import { createSignal, onMount, Setter, Show } from "solid-js"
-import { Button } from "../components/ui/button"
+import { createSignal, onCleanup, onMount, Setter, Show } from "solid-js"
+import { Button } from "~/registry/ui/button"
 import {
   Card,
   CardContent,
@@ -7,24 +7,47 @@ import {
   CardFooter,
   CardHeader,
   CardTitle
-} from "../components/ui/card"
-import { TextField, TextFieldInput, TextFieldLabel } from "../components/ui/text-field"
+} from "~/registry/ui/card"
+import { TextField, TextFieldInput, TextFieldLabel } from "~/registry/ui/text-field"
 import { validateAndSaveCredentials } from "../utils/fetch"
  
 export default function Login({sP}: {sP: Setter<string>}) {
   const [error, setError] = createSignal<string | null>(null)
   const [loginText, setLoginText] = createSignal<string>('>.^.<');
 
+  var keepLooping = true
+  const text = 'Login to the admin panel';
+
+  onCleanup(() => { keepLooping = false })
   onMount(() => {
-    const text = 'Login to the admin panel';
-    function updateLoginText(index: number) {
-      setTimeout(() => {
-        setLoginText(text.slice(0, index))
-        updateLoginText(index + 1)
-      }, 150/Math.sqrt(text.length))
+    function updateLoginText(index: number, increasing: boolean = true) {
+      if (!keepLooping) return
+      setLoginText(text.slice(0, index))
+      if (increasing) {
+        if (index < text.length && increasing) {
+          setTimeout(() => {
+            updateLoginText(index + 1)
+          }, 150/Math.sqrt(text.length))
+        } else if (index == text.length && increasing) {
+          setTimeout(() => {
+            updateLoginText(index, false)
+          }, 4000)
+        }
+      } else {
+        if (index > 1) {
+          setTimeout(() => {
+            updateLoginText(index - 1, false)
+          }, 50/Math.sqrt(text.length))
+        } else {
+          setLoginText('😊')
+          setTimeout(() => {
+            updateLoginText(index + 1)
+          }, 1000)
+        }
+      }
     }
 
-    setTimeout(() => updateLoginText(0), 1000)
+    setTimeout(() => updateLoginText(1), 1000)
   })
 
   var username: HTMLInputElement = undefined as any

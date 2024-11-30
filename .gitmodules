@@ -1,0 +1,6 @@
+[submodule "frontend/submodules/solid-ui"]
+	path = frontend/submodules/solid-ui
+	url = https://github.com/sek-consulting/solid-ui
+[submodule "frontend/submodules/shadcn-solid"]
+	path = frontend/submodules/shadcn-solid
+	url = https://github.com/hngngn/shadcn-solid

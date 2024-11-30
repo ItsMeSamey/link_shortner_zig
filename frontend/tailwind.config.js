@@ -4,6 +4,7 @@ export default {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
+    "./submodules/shadcn-solid/packages/tailwindcss/ui/*.tsx"
   ],
   prefix: "",
   theme: {

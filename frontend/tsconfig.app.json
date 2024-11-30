@@ -19,7 +19,17 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    /* Aliases */
+    "baseUrl": "./",
+    "paths": {
+      "~": ["./submodules/solid-ui/apps/docs/src/"],
+      "~/*": ["./submodules/solid-ui/apps/docs/src/*"],
+      "@/libs/*": ["./libs/*"],
+      "@shadui": ["./submodules/shadcn-solid/packages/tailwindcss/ui/"],
+      "@shadui/*": ["./submodules/shadcn-solid/packages/tailwindcss/ui/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "submodules"]
 }

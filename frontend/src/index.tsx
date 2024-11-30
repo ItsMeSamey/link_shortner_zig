@@ -1,36 +1,29 @@
-import { ColorModeProvider, ColorModeScript, createLocalStorageManager } from '@kobalte/core';
-import { render } from 'solid-js/web';
-import Login from './pages/Login';
+import { ColorModeProvider, ColorModeScript, createLocalStorageManager } from '@kobalte/core'
+import { render } from 'solid-js/web'
+import Login from './pages/Login'
 import './app.css'
-import { createSignal, Match, Switch } from 'solid-js';
-import ModeToggle from './components/custom/ModeToggle';
-import { loginData } from './utils/fetch';
-import Dashboard from './pages/Dashboard';
-
-const [page, setPage] = createSignal<string>(loginData.get()? 'Dashboard': 'Login');
+import { Match, Switch } from 'solid-js'
+import ModeToggle from './components/ModeToggle'
+import Dashboard from './pages/Dashboard'
+import { selectP, setP } from './utils/stateManagement'
 
 render(function() {
   const storageManager = createLocalStorageManager('ui-theme')
   return (
-    <>
+    <div class='h-screen w-screen flex flex-col'>
       <ColorModeScript storageType={storageManager.type} />
       <ColorModeProvider initialColorMode='dark' disableTransitionOnChange={false} storageManager={storageManager}>
-        <div class='h-screen w-screen flex flex-col'>
-          <Switch>
-            <Match when={page() === 'Login'}>
-              <div class='flex justify-end'>
-                <ModeToggle />
-              </div>
-              <Login sP={setPage} />
-            </Match>
-            <Match when={page() === 'Dashboard'}>
-                <ModeToggle />
-              <Dashboard sP={setPage} />
-            </Match>
-          </Switch>
-        </div>
+        <Switch fallback={(() => setP('Login'))()}>
+          <Match when={selectP('Login')}>
+            <div class='justify-end top-0 right-0 absolute z-50 mt-2 mr-2'><ModeToggle /></div>
+            <Login />
+          </Match>
+          <Match when={selectP('Dashboard')}>
+            <Dashboard />
+          </Match>
+        </Switch>
       </ColorModeProvider>
-    </>
-  );
-}, document.getElementById('root')!);
+    </div>
+  )
+}, document.getElementById('root')!)
 
