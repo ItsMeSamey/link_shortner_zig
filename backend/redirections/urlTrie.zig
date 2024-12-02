@@ -81,40 +81,6 @@ test "indexFromCharacter and characterFromIndex" {
   }
 }
 
-// This will e used in the Entry struct
-pub fn PackedStaticBitSet(comptime count: u16) type {
-  return packed struct {
-    holder: IntType = 0,
-
-    pub const IntType = std.meta.Int(.unsigned, count);
-
-    pub fn zeroOut(self: *@This()) void {
-      self.holder = 0;
-    }
-
-    pub fn get(self: *const @This(), index: u16) bool {
-      return (self.holder & (@as(IntType, 1) << @intCast(index))) != 0;
-    }
-
-    pub fn set(self: *@This(), index: u16, value: bool) void {
-      if (value) {
-        self.holder |= (@as(IntType, 1) << @intCast(index));
-      } else {
-        self.holder &= ~(@as(IntType, 1) << @intCast(index));
-      }
-    }
-  };
-}
-
-test PackedStaticBitSet {
-  var set = PackedStaticBitSet(TotalCharacterCount){};
-  for (0..TotalCharacterCount) |i| {
-    try std.testing.expectEqual(false, set.get(@intCast(i)));
-    set.set(@intCast(i), true);
-    try std.testing.expectEqual(true, set.get(@intCast(i)));
-  }
-}
-
 /// The terminal Value Entry
 const Value = packed struct {
   deathat: i64,
@@ -171,76 +137,64 @@ test Value {
   }
 }
 
-const EntryTag = enum(u1) {
-  TerminalEntry = 0,
-  Entry = 1,
-
-  pub fn getType(self: *const @This()) type {
-    return switch (self.*) {
-      .Entry => Entry,
-      .TerminalEntry => TerminalEntry,
-    };
-  }
-};
 
 const Entry = packed struct {
-  next: ?*[TotalCharacterCount]Entry = null,
-  fragments: PackedStaticBitSet(TotalCharacterCount) = .{},
-  padding: u2 = undefined,
-  tag: EntryTag = .Entry,
-
-  pub fn toTerminalEntry(self: *Entry) *TerminalEntry { return @ptrCast(self); }
-  pub fn blanked(self: *Entry) *Entry {
-    self.next = null;
-    self.fragments.zeroOut();
-    self.tag = .Entry;
-    return self;
-  }
-
-  pub fn createNext(allocator: std.mem.Allocator) !*[TotalCharacterCount]Entry {
-    const retval = try allocator.create([TotalCharacterCount]Entry);
-    inline for (0..TotalCharacterCount) |i| {
-      _ = (&(retval.*[i])).blanked();
-    }
-    return retval;
-  }
-};
-
-const TerminalEntry = packed struct {
+  next: ?*NextType = null,
   value: ?*Value = null,
-  rest: packed union {
-    char: u88,
-    tag: packed struct {
-      padding: u77 = 0,
-      tag: EntryTag = .TerminalEntry,
-    },
-  },
 
-  pub fn new(allocator: std.mem.Allocator) !*TerminalEntry {
-    var retval = try allocator.create(TerminalEntry);
-    retval.value = null;
-    retval.rest.char = 0;
-    retval.rest.tag.tag = .TerminalEntry;
+  const NextType = [TotalCharacterCount]Entry;
+
+  pub fn createNext(allocator: std.mem.Allocator) !*NextType {
+    const retval = try allocator.create(NextType);
+    @memset(retval, Entry{});
     return retval;
   }
 
-  pub fn setRestChars(self: *TerminalEntry, rest: []const u8) void {
-    std.debug.assert(rest.len <= 11);
-    const bytes = @as([*]u8, @ptrCast(&self.rest.char));
-    @memcpy(bytes, rest);
+  /// Asserts that the url is valid
+  /// Returns the first entry that has no next, modifies the entry and location accordingly
+  pub fn getNonMatching(self: *Entry, location: *[]const u8) *Entry {
+    std.debug.assert(isUrlValid(location.*));
+    var entry = self;
 
-    if (self.len == 11) {
-      bytes[10] <<= 1;
-      self.rest.tag.tag = .TerminalEntry;
+    for (location.*, 0..) |char, i| {
+      if (entry.next == null) {
+        location.* = location.*[i..];
+        return entry;
+      }
+      entry = &entry.next.?[indexFromCharacter(char)];
+    }
+    location.* = location.*[location.len..]; // 0 length slice
+    return entry;
+  }
+
+  /// Asserts that the url is valid
+  /// Adds nodes and returns the last one for all characters in location.
+  /// Returns the last entry
+  pub fn addNodes(self: *Entry, location: []const u8, allocator: std.mem.Allocator) !*Entry {
+    std.debug.assert(isUrlValid(location));
+    var entry = self;
+
+    for (location) |char| {
+      if (entry.next == null) entry.next = try Entry.createNext(allocator);
+      entry = &entry.next.?[indexFromCharacter(char)];
+    }
+
+    return entry;
+  }
+
+  /// Free all the entries and values that are children of this entry (value of this entry is also free'd)
+  pub fn freeRecursively(self: *Entry, allocator: std.mem.Allocator) void {
+    if (self.value) |value| value.free(allocator);
+    if (self.next) |next| {
+      for (0..TotalCharacterCount) |i| next[i].freeRecursively(allocator);
+      allocator.destroy(next);
     }
   }
 };
 
 test "Value and Entry type properties" {
-  try std.testing.expectEqual(@alignOf(Entry), @alignOf(TerminalEntry));
-
-  try std.testing.expectEqual(@bitSizeOf(Entry), 64 + 88);
-  try std.testing.expectEqual(@bitSizeOf(TerminalEntry), 64 + 88);
+  try std.testing.expectEqual(128, @bitSizeOf(Entry));
+  try std.testing.expectEqual(16, @sizeOf(Entry));
 }
 
 pub const Trie = struct {
@@ -248,110 +202,71 @@ pub const Trie = struct {
   allocator: std.mem.Allocator,
 
   pub fn getEntry(self: *Trie, location: []const u8) ?*Value {
-    var head: *Entry = &self.head;
-    for (0..location.len) |i| {
-      switch (head.tag) {
-        .value => {
-          if (head.next == null) return null;
-          const idx = indexFromCharacter(location[i]);
-          if (!head.fragments.get(idx)) return null;
-          head = (&head.next.?)[idx];
-        },
-        .terminal => {
-          const th = head.toTerminalEntry();
-          const restLocation = location[i..];
-          if (restLocation.len > 11) return null;
-          var restUint: u88 = 0;
-          const restChars = @as([*]u8, @ptrCast(&restUint))[0..restLocation.len];
-          @memcpy(restChars, restLocation);
-          if (restLocation.len == 11) {
-            restChars[10] <<= 1;
-            restChars[10] |= @intFromEnum(EntryTag.TerminalEntry);
-          }
-
-          return if (restChars != th.characters) null else th.value;
-        },
-      }
-    }
-  }
-
-  fn mustAddNodesForLocation(self: *Trie, location: []const u8, entry: *Entry) !*Entry {
-    for (location) |char| {
-      const idx = indexFromCharacter(char);
-      std.debug.assert(entry.next == null);
-      entry.next = try Entry.createNext(self.allocator);
-      entry.fragments.set(idx, true);
-      entry = &entry.next.?[idx];
-    }
-  }
-
-  fn freeChain(self: *Trie, entry: *Entry) void {
-    switch (entry.tag) {
-      .Entry => {
-
-      },
-      .TerminalEntry => {
-        self.fre
-      }
-    }
-    for (0..TotalCharacterCount) |i| {
-      if 
-    }
-  }
-
-  fn addNodes(self: *Trie, location: []const u8, entry: *Entry, val: *Value) !void {
-    if (entry.tag == .TerminalEntry) {
-      const te = entry.toTerminalEntry();
-      const otherVal = te.rest.value;
-      const otherLocationFull = std.mem.asBytes(&te.rest.char);
-
-      const len = std.mem.indexOfScalar(u8, otherLocationFull, 0) orelse 11;
-      const otherLocation = otherLocationFull[0..len];
-
-      const diff = std.mem.indexOfDiff(u8, location, otherLocation) orelse {
-        otherVal.free(self.allocator);
-        entry.value = val;
-        return;
-      };
-
-      entry.next = null;
-      entry.tag = .Entry;
-      try mustAddNodesForLocation(self, location[0..diff], entry) catch {
-
-      }
-
-    }
-
-    while (location.len >= 12) {
-      const idx = indexFromCharacter(location[0]);
-      entry.next = try Entry.createNext(self.allocator);
-      entry = &(entry.next.*[idx]);
-      location = location[1..];
-    }
-
-    entry.tag = .TerminalEntry;
-    const te = entry.toTerminalEntry();
-    te.setRestChars(location);
-    te.value = val;
-  }
-
-  fn addEntry(self: *Trie, location: []const u8, head: *Entry, val: *Value) !void {
-    for (0..location.len) |i| {
-      if (head.next == null) return addNodes(location[i..], head, val);
-      const idx = indexFromCharacter(location[i]);
-      if (!head.fragments.get(idx) or head.next.?[idx].tag == .TerminalEntry) {
-        head.fragments.set(idx, true);
-        return self.addNode(location[i+1..], &head.next.?[idx], val);
-      }
-      head = &head.next.?[idx];
-    }
+    const entry = self.head.getNonMatching(&location);
+    if (location.len != 0) return null;
+    return entry.value;
   }
 
   pub fn add(self: *Trie, location: []const u8, dest: []const u8, deathat: u32) !void {
-    const value = try Value.new(self.allocator, dest, deathat);
-    errdefer value.free(self.allocator);
+    const entry = try self.head.addNodes(location, self.allocator);
+    if (entry.value) |value| value.free(self.allocator);
+    entry.value = try Value.new(self.allocator, dest, deathat);
+  }
 
-    try self.addEntryValue(location, &self.head, value);
+  pub fn remove(self: *Trie, location: []const u8) !void {
+    // This is kinda expensive but has to be done
+    var head: *Entry = &self.head;
+    outer: for (location) |char| {
+      if (head.next == null) return error.NotFound;
+      const idx = indexFromCharacter(char);
+      if (head.next.?[idx].next == null) return error.NotFound;
+
+      for (0..TotalCharacterCount) |i| {
+        if (i != idx and head.next.?[i].next != null) {
+          head = &head.next.?[i];
+          continue :outer;
+        }
+      }
+
+      head.freeRecursively(self.allocator);
+      head.* = .{};
+      return;
+    }
+  }
+
+  pub fn deinit(self: *Trie) void {
+    self.head.freeRecursively(self.allocator);
   }
 };
+
+test Trie {
+  const allocator = std.testing.allocator;
+  var trie = Trie{ .allocator = allocator };
+  defer trie.deinit();
+
+  try trie.add("hello1", "hello", 1024);
+  try trie.add("hello2", "world", 1024);
+  try trie.add("hello3", "world", 1024);
+
+  try trie.remove("hello1");
+
+  try trie.add("hello1", "hello", 1024);
+  try trie.add("hello2", "world", 1024);
+  try trie.add("hello3", "world", 1024);
+
+  try trie.remove("hello2");
+
+  try trie.add("hello1", "hello", 1024);
+  try trie.add("hello2", "world", 1024);
+  try trie.add("hello3", "world", 1024);
+
+  try trie.remove("hello3");
+
+  try trie.add("hello1a", "hello", 1024);
+  try trie.add("hello2a", "world", 1024);
+  try trie.add("hello3a", "world", 1024);
+  try trie.add("hello1bs", "hello", 1024);
+  try trie.add("hello2cs", "world", 1024);
+  try trie.add("hello3da", "world", 1024);
+}
 
