@@ -167,7 +167,7 @@ fn adminRequest(input: []u8, responseWriter: ResponseWriter) !void {
     '2' => {
       // getLatestModificationIndex
 
-      try std.fmt.format(responseWriter.writer, "{x}", .{ ReidrectionMap.modificationIndex });
+      try std.fmt.format(responseWriter.writer, "{x}", .{ rmap.modificationIndex });
     },
     '3' => {
       // getAllModifications

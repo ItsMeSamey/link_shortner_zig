@@ -96,7 +96,7 @@ pub fn writeMapModificationIterator(self: *const @This(), iter: *ReidrectionMap.
     }
   }
 
-  try std.fmt.format(anyChunkWriter, "{x}", .{ ReidrectionMap.modificationIndex });
+  try std.fmt.format(anyChunkWriter, "{x}", .{ @import("router.zig").rmap.modificationIndex });
   try chunkWriter.finish();
 }
 

@@ -1,8 +1,8 @@
 //! A hash map that stores redirection entries
 const std = @import("std");
-pub var modificationIndex: u64 = 0;
 
-modification: CircularOverwritingList,
+modificationIndex: u64 = 0,
+modification: CircularOverwritingList = .{},
 map: Map,
 
 const ReidrectionMap = @This();
@@ -23,7 +23,7 @@ pub const CircularOverwritingList = @import("staticCircularOverwritingList.zig")
 pub const Map = std.HashMap(Key, void, MapContext, std.hash_map.default_max_load_percentage);
 
 // The value struct with redirection and timeout
-const Key = struct {
+pub const Key = struct {
   // location string followed by the dest string
   data: [*] const u8,
   // Time (in seconds) after which an entry must die
@@ -122,14 +122,13 @@ const MapContext = struct {
 pub fn init(allocator: std.mem.Allocator) ReidrectionMap {
   return .{
     .map = Map.init(allocator),
-    .modification = CircularOverwritingList{},
   };
 }
 
 pub fn add(self: *ReidrectionMap, location: []const u8, dest: []const u8, deathat: TimestampType) !void {
   const k = try Key.init(self.map.allocator, location, dest, deathat);
-  const removed = self.modification.push(.{ .index = modificationIndex, .modification = .{ .add = k } });
-  modificationIndex += 1;
+  const removed = self.modification.push(.{ .index = self.modificationIndex, .modification = .{ .add = k } });
+  self.modificationIndex += 1;
 
   if (removed) |r| {
     switch (r.modification) {
@@ -147,8 +146,8 @@ pub fn lookup(self: *ReidrectionMap, location: []const u8) ?*Key {
 
 pub fn remove(self: *ReidrectionMap, location: []const u8) bool {
   if (self.map.getKeyPtr(.{ .data = location.ptr, .deathat = undefined, .keyLen = @intCast(location.len), .valLen = undefined })) |kptr| {
-    const removed = self.modification.push(.{ .index = modificationIndex, .modification = .{ .add = kptr.* } });
-    modificationIndex += 1;
+    const removed = self.modification.push(.{ .index = self.modificationIndex, .modification = .{ .add = kptr.* } });
+    self.modificationIndex += 1;
     if (removed) |r| {
       switch (r.modification) {
         .remove => |v| self.map.allocator.free(v.dataSlice()),
