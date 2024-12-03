@@ -10,7 +10,7 @@ const allowedHeaders = "auth,dest,death";
 const corsResponse = "HTTP/1.1 200\r\nAccess-Control-Allow-Origin:*\r\nAccess-Control-Allow-Methods:" ++ allowedMethods ++ "\r\nAccess-Control-Allow-Headers:" ++ allowedHeaders ++ "\r\nConnection:close\r\n\r\n";
 
 // The global redirections map
-var rmap: ReidrectionMap = undefined;
+pub var rmap: ReidrectionMap = undefined;
 pub fn initRmap(allocator: std.mem.Allocator) void {
   rmap = ReidrectionMap.init(allocator);
 }

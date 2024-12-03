@@ -70,8 +70,7 @@ pub fn writeString(self: *const Self, data: []const u8 ) !void {
 
 pub fn writeMapIterator(self: *const Self, iter: *ReidrectionMap.Map.Iterator, count: u32) !void {
   var chunkWriter = try ChunkedWriterType.init(self.writer);
-  var genericChunkWriter = chunkWriter.writer();
-  const anyChunkWriter = genericChunkWriter.any();
+  const anyChunkWriter = chunkWriter.writer().any();
 
   var done: u32 = 0;
   while (iter.next()) |val| {
@@ -86,8 +85,7 @@ pub fn writeMapIterator(self: *const Self, iter: *ReidrectionMap.Map.Iterator, c
 
 pub fn writeMapModificationIterator(self: *const @This(), iter: *ReidrectionMap.CircularOverwritingList.Iterator) !void {
   var chunkWriter = try ChunkedWriterType.init(self.writer);
-  var genericChunkWriter = chunkWriter.writer();
-  const anyChunkWriter = genericChunkWriter.any();
+  const anyChunkWriter = chunkWriter.writer().any();
 
   while (iter.next()) |val| {
     switch (val.modification) {

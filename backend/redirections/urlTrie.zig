@@ -124,6 +124,7 @@ const Value = packed struct {
 };
 
 test Value {
+  std.testing.refAllDecls(Value);
   const allocator = std.testing.allocator;
 
   const example = "https://example.com";
@@ -192,7 +193,8 @@ const Entry = packed struct {
   }
 };
 
-test "Value and Entry type properties" {
+test Entry {
+  std.testing.refAllDecls(Entry);
   try std.testing.expectEqual(128, @bitSizeOf(Entry));
   try std.testing.expectEqual(16, @sizeOf(Entry));
 }
@@ -237,9 +239,13 @@ pub const Trie = struct {
   pub fn deinit(self: *Trie) void {
     self.head.freeRecursively(self.allocator);
   }
+
+  const Iterator = struct {
+  };
 };
 
 test Trie {
+  std.testing.refAllDecls(Trie);
   const allocator = std.testing.allocator;
   var trie = Trie{ .allocator = allocator };
   defer trie.deinit();

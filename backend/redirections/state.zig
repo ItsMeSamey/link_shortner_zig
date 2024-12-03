@@ -6,22 +6,16 @@ modificationIndex: u64,
 
 const rmap: *RedirectionMap = &@import("../server/router.zig").rmap;
 
-const BufferedWriterType = std.io.BufferedWriter(1 << 20, @TypeOf(std.fs));
+const BufferedWriterType = std.io.BufferedWriter(1 << 20, std.fs.File.Writer);
 const BufferedWriterStruct = struct {
-  unbufferedConstructor: std.fs.File.Writer,
-  unbuffered: std.io.AnyWriter,
   bufferedConstructor: BufferedWriterType,
-  bufferedGeneric: BufferedWriterType.Writer,
   buffered: std.io.AnyWriter
 };
 
 fn getBufferedWriter(self: *@This()) BufferedWriterStruct {
   var retval: BufferedWriterStruct = undefined;
-  retval.unbufferedConstructor = self.file.writer();
-  retval.unbuffered = retval.unbufferedConstructor.any();
-  retval.bufferedConstructor = .{ .unbuffered_writer = retval.unbuffered };
-  retval.bufferedGeneric = retval.bufferedConstructor.writer();
-  retval.buffered = retval.bufferedGeneric.any();
+  retval.bufferedConstructor = .{ .unbuffered_writer = self.file.writer() };
+  retval.buffered = retval.bufferedConstructor.writer().any();
   return retval;
 }
 
