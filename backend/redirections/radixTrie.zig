@@ -147,219 +147,252 @@ pub fn characterFromIndex(index: u8) u8 {
 
 /// Returns index from a character or return `InvalidIndex` if the character is invalid
 pub fn indexFromCharacter(char: u8) u8 {
-  if (char >= CharacterEnd or char < CharacterStart) return InvalidIndex;
+  std.debug.assert(isCharacterAllowed(char));
   return IndexToCharacterMap[char - CharacterStart];
 }
 
 test "indexFromCharacter and characterFromIndex" {
   for (0..0xff + 1) |i| {
     const char: u8 = @intCast(i);
+    if (!isCharacterAllowed(char)) continue;
     const index = indexFromCharacter(char);
-    if (index == InvalidIndex) continue;
 
     try std.testing.expectEqual(char, characterFromIndex(index));
   }
 }
 
-// ##################################################
-// # - implementation of entry and value struct's - #
-// ##################################################
+// ############################################
+// # - a convoluted but efficient node impl - # 
+// ############################################
 
-/// set the post string and `strlen` of a struct, so we have to make only one allocation
-/// Asserts that the string is of valid length
-fn initPostStringStruct(comptime T: type, allocator: std.mem.Allocator, str: []const u8) !*T {
-  const memory = try allocator.alignedAlloc(u8, @alignOf(T), @sizeOf(T) + str.len);
-  const retval: *T = @alignCast(@ptrCast(memory[0..@sizeOf(T)]));
-  @field(retval, "strlen") = @intCast(str.len);
-  @memcpy(getPostString(retval), str);
-  return retval;
-}
-
-/// get the post string of a struct
-fn getPostString(ptr: anytype) []u8 {
-  return @as([*]u8, @ptrCast(ptr))[@sizeOf(@typeInfo(@TypeOf(ptr)).pointer.child)..][0..@field(ptr, "strlen")];
-}
-
-fn freePostStringStruct(ptr: anytype, allocator: std.mem.Allocator) void {
-  // Because the allocator.free cannot free crooked(length is not a multiple of aligenment) aligend allocated memory (afaik)
-  const memory: [*]u8 = @ptrCast(ptr);
-  const byteLen: usize = @sizeOf(@typeInfo(@TypeOf(ptr)).pointer.child) + @field(ptr, "strlen");
-  allocator.rawFree(memory[0..byteLen], std.math.log2(@alignOf(Value)), @returnAddress());
-}
-
-/// The terminal Value Entry
-const Value = packed struct {
-  deathat: i64,
-  strlen: u16,
-
-  pub fn new(allocator: std.mem.Allocator, dest: []const u8, deathat: i64) !*Value {
-    const retval = try initPostStringStruct(Value, allocator, dest);
-    retval.deathat = deathat;
-    return retval;
-  }
-
-  pub fn getString(self: *@This()) []u8 {
-    return getPostString(self);
-  }
-
-  pub fn free(self: *Value, allocator: std.mem.Allocator) void {
-    freePostStringStruct(self, allocator);
-  }
+const UnpackedNodeValues = struct {
+  next: ?*Node.NextType align(@sizeOf(usize)),
+  value: ?Node.Value align(@sizeOf(usize)),
+  str: ?[]u8 align(@sizeOf(usize)),
 };
 
-const NodeEnum = enum {
-  single_no_value,
-  single_and_value,
-  string_no_value,
-  string_and_value,
-};
+const Node = opaque {
+  pub const Value = struct {
+    deathat: i64,
+    str: []u8,
+  };
 
-const UnitedNode = union {
-  opaqueptr: ?*anyopaque,
-  single_no_value: ?*SingleNoValue,
-  single_and_value: ?*SingleAndValue,
-  string_no_value: ?*StringNoValue,
-  string_and_value: ?*StringAndValue,
-};
+  pub const NextType = [TotalCharacterCount]?*Node;
+  pub const NextSize = @sizeOf(NextType);
 
-const TaggedUnitedNode = struct {
-  array: *NodeArray,
-  idx: u8,
+  fn new(allocator: std.mem.Allocator, value: UnpackedNodeValues) !*@This() {
+    var mask: usize = 0;
+    if (value.next != null) mask |= 0b100;
+    if (value.value != null) mask |= 0b010;
+    if (value.str != null) mask |= 0b001;
 
-  fn exists(self: *@This()) bool {
-    return self.array.nodePointers[self.idx] != null;
-  }
+    var size: usize = 0;
+    if (value.next != null) size += NextSize;
+    if (value.value) |val| size += @sizeOf(i64) + @sizeOf(u16) + val.str.len;
+    if (value.str) |str| size += @sizeOf(u16) + str.len;
 
-  fn getNodes(self: *@This()) *NodeArray {
-    const node = self.array.nodePointers[self.idx];
-    switch (self.array.nodeEnums[self.idx]) {
-      .single_no_value  => return node.single_no_value.?.getNodes(),
-      .single_and_value => return node.single_and_value.?.getNodes(),
-      .string_no_value  => return node.string_no_value.?.getNodes(),
-      .string_and_value => return node.string_and_value.?.getNodes(),
+    const memory = try allocator.alignedAlloc(u8, 8, size);
+    var ptr: []u8 = memory;
+    if (value.next) |nxt| {
+      const bytes = std.mem.asBytes(nxt);
+      @memcpy(ptr[0..bytes.len], bytes);
+      ptr = ptr[bytes.len..];
     }
-  }
-
-  fn freeSelf(self: *@This(), allocator: std.mem.Allocator) void {
-    switch (self.array.nodeEnums[self.idx]) {
-      .single_no_value  => allocator.destroy(self.node.single_no_value),
-      .single_and_value => allocator.destroy(self.node.single_and_value),
-      .string_no_value  => freePostStringStruct(self.node.string_no_value, allocator),
-      .string_and_value => freePostStringStruct(self.node.string_and_value, allocator),
+    if (value.value) |val| {
+      {
+        const bytes = std.mem.toBytes(val.deathat);
+        @memcpy(ptr[0..bytes.len], bytes[0..]);
+        ptr = ptr[bytes.len..];
+      }
+      {
+        const bytes = std.mem.toBytes(@as(u16, @intCast(val.str.len)));
+        @memcpy(ptr[0..bytes.len], bytes[0..]);
+        ptr = ptr[bytes.len..];
+      }
     }
-  }
-
-  fn freeChildren(self: *@This(), allocator: std.mem.Allocator) void {
-    const nodes = self.getNodes();
-    for (0..TotalCharacterCount) |i| {
-      if (nodes.get(i)) |node| node.freeChildren(allocator);
+    if (value.str) |str| {
+      {
+        const bytes = std.mem.toBytes(@as(u16, @intCast(str.len)));
+        @memcpy(ptr[0..bytes.len], bytes[0..]);
+        ptr = ptr[bytes.len..];
+      }
+      {
+        const bytes = str;
+        @memcpy(ptr[0..bytes.len], bytes);
+        ptr = ptr[bytes.len..];
+      }
     }
-    self.freeSelf(allocator);
-  }
-
-  fn freeSelfAndChildren(self: *@This(), allocator: std.mem.Allocator) void {
-    self.freeChildren(allocator);
-    self.freeSelf(allocator);
-  }
-
-  fn getChildrenCount(self: *@This()) u8 {
-    var count: u8 = 0;
-    const nodes = self.getNodes();
-    for (nodes.nodePointers) |node| {
-      if (node.opaqueptr != null) count += 1;
+    if (value.value) |val| {
+      const bytes = val.str;
+      @memcpy(ptr[0..bytes.len], bytes);
+      ptr = ptr[bytes.len..];
     }
-    return count;
+
+    return @ptrFromInt(@intFromPtr(memory.ptr) | mask);
   }
-};
 
-const NodeArray = struct {
-  nodePointers: [TotalCharacterCount]*UnitedNode,
-  nodeEnums: [TotalCharacterCount]NodeEnum,
+  fn getNext(self: *@This()) ?*NextType {
+    var ptr = @intFromPtr(self);
+    const mask: u64 = 0b111;
+    const existence = ptr & mask;
+    ptr &= ~mask;
 
-  fn getUnsafe(self: *NodeArray, index: u8) TaggedUnitedNode {
+    if (existence & 0b100 == 0) { return null; }
+    return @ptrFromInt(ptr);
+  }
+
+  fn getNextAndStr(self: *@This()) UnpackedNodeValues {
+    var ptr = @intFromPtr(self);
+    const mask: u64 = 0b111;
+    const existence = ptr & mask;
+    ptr &= ~mask;
+
+    var next: ?*NextType = undefined;
+    if (existence & 0b100 != 0) {
+      next = @ptrFromInt(ptr);
+      ptr += NextSize;
+    } else {
+      next = null;
+    }
+
+    if (existence & 0b010 != 0) {
+      ptr += @sizeOf(i64) + @sizeOf(u16);
+    }
+
+    var str: ?[]u8 = undefined;
+    if (existence & 0b001 != 0) {
+      str = @as([*]u8, @ptrFromInt(ptr + @sizeOf(u16)))[0.. @as(*u16, @ptrFromInt(ptr)).*];
+      ptr += @sizeOf(u16) + str.?.len;
+    } else {
+      str = null;
+    }
+
     return .{
-      .array = self,
-      .idx = index,
+      .next = next,
+      .value = null,
+      .str = str,
     };
   }
 
-  fn get(self: *NodeArray, index: u8) ?TaggedUnitedNode {
-    const retval = self.getUnsafe(index);
-    return if (retval.exists()) retval else null;
+  fn getComponents(self: *@This()) UnpackedNodeValues {
+    var ptr = @intFromPtr(self);
+    const mask: u64 = 0b111;
+    const existence = ptr & mask;
+    ptr &= ~mask;
+
+    var next: ?*NextType = undefined;
+    if (existence & 0b100 != 0) {
+      next = @ptrFromInt(ptr);
+      ptr += NextSize;
+    } else {
+      next = null;
+    }
+
+    var value: ?Value = undefined;
+    var valuestrlen: u16 = undefined;
+    if (existence & 0b010 != 0) {
+      value = .{
+        .deathat = @as(*i64, @ptrFromInt(ptr)).*,
+        .str = undefined,
+      };
+      ptr += @sizeOf(i64);
+      valuestrlen = @as(*u16, @ptrFromInt(ptr)).*;
+      ptr += @sizeOf(u16);
+    } else {
+      value = null;
+      valuestrlen = 0;
+    }
+
+    var str: ?[]u8 = undefined;
+    if (existence & 0b001 != 0) {
+      str = @as([*]u8, @ptrFromInt(ptr + @sizeOf(u16)))[0.. @as(*u16, @ptrFromInt(ptr)).*];
+      ptr += @sizeOf(u16) + str.?.len;
+    } else {
+      str = null;
+    }
+
+    if (value != null) {
+      value.?.str = @as([*]u8, @ptrFromInt(ptr))[0..valuestrlen];
+    }
+
+    return .{
+      .next = next,
+      .value = value,
+      .str = str,
+    };
   }
 
-  fn set(self: *NodeArray, index: u8, node: UnitedNode, tag: NodeEnum) void {
-    self.nodePointers[index] = node;
-    self.nodeEnums[index] = tag;
+  fn getNodeMemory(self: *@This()) []align(@sizeOf(usize)) u8 {
+    var ptr = @intFromPtr(self);
+    const mask: u64 = 0b111;
+    const existence = ptr & mask;
+    ptr &= ~mask;
+
+    const memory: [*]align(@sizeOf(usize)) u8 = @ptrFromInt(ptr);
+    var size: usize = 0;
+    if (existence & 0b100 != 0) {
+      size += NextSize;
+      ptr += NextSize;
+    }
+
+    if (existence & 0b010 != 0) {
+      size += @sizeOf(i64) + @sizeOf(u16) + @as(*u16, @ptrFromInt(ptr + @sizeOf(i64))).*;
+      ptr += @sizeOf(i64) + @sizeOf(u16);
+    }
+
+    if (existence & 0b001 != 0) {
+      size += @sizeOf(u16) + @as(*u16, @ptrFromInt(ptr)).*;
+    }
+
+    return memory[0..size];
+  }
+
+  fn freeNode(self: *@This(), allocator: std.mem.Allocator) void {
+    allocator.free(self.getNodeMemory());
   }
 };
 
-const SingleNoValue = struct {
-  nodes: NodeArray,
-
-  fn getNodes(self: *SingleNoValue) *NodeArray {
-    return &self.nodes;
-  }
-};
-
-const SingleAndValue = struct {
-  value: Value,
-  underlying: SingleNoValue,
-
-  fn getNodes(self: *@This()) *NodeArray {
-    return self.underlying.getNodes();
-  }
-};
-
-const StringNoValue = struct {
-  underlying: SingleNoValue,
-  strlen: u16,
-
-  fn getNodes(self: *@This()) *NodeArray {
-    return self.underlying.getNodes();
-  }
-
-  fn getString(self: *@This()) []u8 {
-    return getPostString(self);
-  }
-
-  fn new(allocator: std.mem.Allocator, string: []const u8) !*@This() {
-    const retval = try initPostStringStruct(@This(), allocator, string);
-    retval.underlying.nodes.nodePointers = [1]?*UnitedNode{null} ** TotalCharacterCount;
-    return retval;
-  }
-};
-
-const StringAndValue = struct {
-  underlying: SingleAndValue,
-  strlen: u16,
-
-  fn getNodes(self: *@This()) *NodeArray {
-    return self.underlying.getNodes();
-  }
-
-  fn getString(self: *@This()) []u8 {
-    return getPostString(self);
-  }
-
-  fn new(allocator: std.mem.Allocator, string: []const u8, value: ?*Value) !*@This() {
-    const retval = try initPostStringStruct(@This(), allocator, string);
-    retval.underlying.nodes.nodePointers = [1]?*UnitedNode{null} ** TotalCharacterCount;
-    retval.underlying.value = value;
-    return retval;
-  }
-};
-
-test Value {
+test Node {
   const allocator = std.testing.allocator;
-
   const example = "https://example.com";
-  inline for (0..255) |i| {
+  const val = "randomValue";
+
+  @setEvalBranchQuota(10_000);
+  inline for (0..1) |i| {
     const string = example ++ [1]u8{'!'} ** i;
-    const v = try Value.new(allocator, string, @intCast(i));
-    defer v.free(allocator);
-    try std.testing.expectEqualStrings(string, v.getString());
-    try std.testing.expectEqual(@as(i64, @intCast(i)), v.deathat);
+    const valstr = [1]u8{i} ++ val ++ [1]u8{i} ** i;
+    const next = [1]?*Node{@ptrFromInt(i)} ** TotalCharacterCount;
+
+    const mutstr = try allocator.dupe(u8, string);
+    defer allocator.free(mutstr);
+    const mutvalstr = try allocator.dupe(u8, valstr);
+    defer allocator.free(mutvalstr);
+    const mutnext: *Node.NextType = (try allocator.alloc(?*Node, TotalCharacterCount))[0..TotalCharacterCount];
+    defer allocator.free(mutnext);
+    @memcpy(mutnext, &next);
+
+    const node = try Node.new(allocator, .{
+      .next = mutnext,
+      .value = .{
+        .deathat = @as(i64, @intCast(i)),
+        .str = mutstr,
+      },
+      .str = mutvalstr,
+    });
+    defer node.freeNode(allocator);
+
+    const gottenNext = node.getNext();
+    const gottenNextAndStr = node.getNextAndStr();
+    const gottenComponents = node.getComponents();
+
+    try std.testing.expectEqual(next, gottenNext.?.*);
+    try std.testing.expectEqual(next, gottenNextAndStr.next.?.*);
+    try std.testing.expectEqual(next, gottenComponents.next.?.*);
+
+    try std.testing.expectEqualStrings(valstr, gottenNextAndStr.str.?);
+    try std.testing.expectEqualStrings(valstr, gottenComponents.str.?);
+
+    try std.testing.expectEqualStrings(string, gottenComponents.value.?.str);
   }
 }
 
@@ -368,23 +401,23 @@ test Value {
 // ########################################
 
 const RadixTrie = struct {
-  head: NodeArray,
+  head: Node.NextType,
   allocator: std.mem.Allocator,
 
 
-  fn getFirstNonMatching(node: TaggedUnitedNode, key: []const u8) !TaggedUnitedNode {
-    while (key.len > 0) {
-      const idx = indexFromCharacter(key[0]);
-      if (node.getNodes().nodePointers[idx] == null) {
-        return node;
-      }
-      if (node.getChildrenCount() == 0) {
-        return node;
-      }
-      node = node.getNodes().nodePointers[idx].?;
-    }
-    return node;
-  }
+  // fn getFirstNonMatching(node: TaggedUnitedNode, key: []const u8) !TaggedUnitedNode {
+  //   while (key.len > 0) {
+  //     const idx = indexFromCharacter(key[0]);
+  //     if (node.getNodes().nodePointers[idx] == null) {
+  //       return node;
+  //     }
+  //     if (node.getChildrenCount() == 0) {
+  //       return node;
+  //     }
+  //     node = node.getNodes().nodePointers[idx].?;
+  //   }
+  //   return node;
+  // }
 
   // fn addNodes(self: *@This(), node: TaggedUnitedNode, key: []const u8) !TaggedUnitedNode {
   //   while (key.len > 0) {
