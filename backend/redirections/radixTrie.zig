@@ -3,7 +3,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-
 // ##############################################
 // # - implementation of some slice functions - #
 // ##############################################
@@ -655,7 +654,11 @@ pub const RadixTrie = struct {
         if (siblingsCount > 1) return;  // Cant do anything for nodes with multiple siblings
 
         var parentComponents = parentPtr.?.*.getComponents();
-        std.debug.assert(parentComponents.value != null or siblingsCount != 0);
+        if (parentComponents.value == null and siblingsCount == 0) { // This should never happen unless OOM (from which we somehow recovered)
+          parentPtr.?.*.freeNode(self.allocator);
+          @as(*?*Node, @ptrCast(parentPtr.?)).* = null;
+          return;
+        }
         parentComponents.next = null;
 
         if (siblingsCount == 0) {
@@ -709,22 +712,41 @@ test RadixTrie {
     dest: []const u8,
   };
 
-  comptime var addArgs: []const AddArgsType = &.{};
-  addArgs = addArgs ++ &[_]AddArgsType{
-    .{ .key = "foo", .deathat = 0, .dest = "https://example.com/foo" },
-    .{ .key = "foo/bar", .deathat = 1, .dest = "https://example.com/foo/bar" },
-  };
-  inline for (0..100) |i| {
-    const key = std.fmt.comptimePrint("{d}", .{i});
-    addArgs = addArgs ++ &[_]AddArgsType{
-      .{ .key = key, .deathat = 5, .dest = "https://example.com/" ++ key },
-    };
-  }
-  addArgs = addArgs ++ &[_]AddArgsType{
-    .{ .key = "foo", .deathat = 0, .dest = "https://example.com/foo" },
-    .{ .key = "foo/bar", .deathat = 1, .dest = "https://example.com/foo/bar" },
-  };
+  var arena = std.heap.ArenaAllocator.init(allocator);
+  const arenaAllocator = arena.allocator();
+  defer arena.deinit();
+  var addArgsList = std.ArrayList(AddArgsType).init(arenaAllocator);
 
+  try addArgsList.append(.{
+    .key = "foo",
+    .deathat = -1,
+    .dest = "https://example.com/10",
+  });
+  try addArgsList.append(.{
+    .key = "bar",
+    .deathat = -2,
+    .dest = "https://example.com/20",
+  });
+  for (0..1000) |i| {
+    try addArgsList.append(.{
+      .key = try std.fmt.allocPrint(arenaAllocator, "{d}", .{i}),
+      .deathat = @intCast(i),
+      .dest = try std.fmt.allocPrint(arenaAllocator, "https://example.com/{d}", .{i}),
+    });
+  }
+  try addArgsList.append(.{
+    .key = "foo",
+    .deathat = -1,
+    .dest = "https://example.com/10",
+  });
+  try addArgsList.append(.{
+    .key = "bar",
+    .deathat = -2,
+    .dest = "https://example.com/20",
+  });
+
+  std.debug.print("testing add\n", .{});
+  const addArgs = try addArgsList.toOwnedSlice();
   for (addArgs, 0..) |args, idx| {
     try trie.add(args.key, args.dest, args.deathat);
     for (addArgs[0..idx]) |a| {
@@ -734,6 +756,7 @@ test RadixTrie {
     }
   }
 
+  std.debug.print("testing remove\n", .{});
   const removeArgs = addArgs[2..];
   for (removeArgs, 0..) |args, idx| {
     try trie.delete(args.key);
