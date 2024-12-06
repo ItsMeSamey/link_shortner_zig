@@ -12,7 +12,7 @@ const eqlBytes_allowed = switch (builtin.zig_backend) {
   .stage2_spirv64, .stage2_riscv64 => false,
   else => true,
 };
-pub fn eql(comptime T: type, a: []const T, b: []const T) bool {
+fn eql(comptime T: type, a: []const T, b: []const T) bool {
   if (@sizeOf(T) == 0) return true;
   if (!@inComptime() and std.meta.hasUniqueRepresentation(T) and eqlBytes_allowed) return eqlBytes(std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b));
 
@@ -76,7 +76,7 @@ fn eqlBytes(a: []const u8, b: []const u8) bool {
   return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
 }
 
-pub fn indexOfDiff(comptime T: type, a: []const T, b: []const T) ?usize {
+fn indexOfDiff(comptime T: type, a: []const T, b: []const T) ?usize {
   const shortest = @min(a.len, b.len);
   var index: usize = 0;
   while (index < shortest): (index += 1) if (a[index] != b[index]) return index;
@@ -105,18 +105,18 @@ fn isCharacterAllowed(char: u8) bool {
 }
 
 /// Return true if the url is valid, otherwise returns false
-pub fn isUrlValid(url: []const u8) bool {
+fn isUrlValid(url: []const u8) bool {
   for (url) |val| {
     if (!isCharacterAllowed(val)) return false;
   }
-  return true;
+  return url.len != 0;
 }
 
 /// The value that is returned when the index is invalid
-pub const InvalidIndex = 0xff;
+const InvalidIndex = 0xff;
 
 /// An array of all the allowed characters soted in ascending order w.r.t their ascii values
-pub const CharacterToIndexMap = blk: {
+const CharacterToIndexMap = blk: {
   var allC: []const u8 = &.{};
   for (0..255) |i| {
     const char: u8 = @intCast(i);
@@ -133,27 +133,27 @@ const CharacterEnd = CharacterToIndexMap[CharacterToIndexMap.len-1] + 1;
 
 /// Map from indexed to Characters.
 /// NOTE: IndexToCharacterMap[0] coresponsed to the first valid character not the character `\x00`
-pub const IndexToCharacterMap: [CharacterEnd - CharacterStart]u8 = blk: {
+const IndexToCharacterMap: [CharacterEnd - CharacterStart]u8 = blk: {
   var retval = [1]u8{InvalidIndex} ** (CharacterEnd - CharacterStart);
   for (CharacterToIndexMap, 0..) |char, index| { retval[char - CharacterStart] = @intCast(index); }
   break :blk retval;
 };
 
 /// Returns true if the index provided is valid otherwise returns false
-pub fn isValidIndex(index: u8) bool {
+fn isValidIndex(index: u8) bool {
   return index < CharacterToIndexMap.len;
 }
 
 /// Convert index to ascii character
 /// Assert that the index is valid.
 /// To check index validity, use isValidIndex.
-pub fn characterFromIndex(index: u8) u8 {
+fn characterFromIndex(index: u8) u8 {
   std.debug.assert(isValidIndex(index));
   return CharacterToIndexMap[index];
 }
 
 /// Returns index from a character or return `InvalidIndex` if the character is invalid
-pub fn indexFromCharacter(char: u8) u8 {
+fn indexFromCharacter(char: u8) u8 {
   std.debug.assert(isCharacterAllowed(char));
   return IndexToCharacterMap[char - CharacterStart];
 }
@@ -184,67 +184,71 @@ const Node = opaque {
     str: []const u8,
   };
 
-  pub const NextType = [TotalCharacterCount]?*Node;
-  pub const NextTypeNull = [_]?*Node{null} ** TotalCharacterCount;
-  pub const NextTypeSize = @sizeOf(NextType);
+  const NextType = [TotalCharacterCount]?*Node;
+  const NextTypeNull = [_]?*Node{null} ** TotalCharacterCount;
+  const NextTypeSize = @sizeOf(NextType);
+
+  const mask: usize = 0b111;
+
+  fn newUnfilledSized(allocator: std.mem.Allocator, next: bool, strlen: usize, valstrlen: usize) !*@This() {
+    var maskValue: usize = 0;
+    var size: usize = 0;
+
+    if (next) {
+      maskValue |= 0b100;
+      size += NextTypeSize;
+    }
+    if (valstrlen != 0) {
+      maskValue |= 0b010;
+      size += @sizeOf(i64) + @sizeOf(u16) + valstrlen;
+    }
+    if (strlen != 0) {
+      maskValue |= 0b001;
+      size += @sizeOf(u16) + strlen;
+    }
+
+    const memory = try allocator.alignedAlloc(u8, 8, size);
+    return @ptrFromInt(@intFromPtr(memory.ptr) | maskValue);
+  }
+
+  fn copyAndIncrement(ptr: *[*]u8, bytes: []const u8) void {
+    @memcpy(ptr.*[0..bytes.len], bytes);
+    ptr.* = ptr.*[bytes.len..];
+  }
 
   fn new(allocator: std.mem.Allocator, constValue: UnpackedNodeValues) !*@This() {
     var value = constValue;
     if (value.str) |str| { if (str.len == 0) value.str = null; }
 
-    var mask: usize = 0;
-    if (value.next != null) mask |= 0b100;
-    if (value.value != null) mask |= 0b010;
-    if (value.str != null) mask |= 0b001;
+    const retval = try newUnfilledSized(
+      allocator,
+      value.next != null,
+      if(value.str) |str| str.len else 0,
+      if (value.value) |val| val.str.len else 0
+    );
 
-    var size: usize = 0;
-    if (value.next != null) size += NextTypeSize;
-    if (value.value) |val| size += @sizeOf(i64) + @sizeOf(u16) + val.str.len;
-    if (value.str) |str| size += @sizeOf(u16) + str.len;
+    var ptr: [*]u8 = @ptrFromInt(@intFromPtr(retval) & ~mask);
 
-    const memory = try allocator.alignedAlloc(u8, 8, size);
-    var ptr: []u8 = memory;
     if (value.next) |nxt| {
-      const bytes = std.mem.asBytes(nxt);
-      @memcpy(ptr[0..bytes.len], bytes);
-      ptr = ptr[bytes.len..];
+      copyAndIncrement(&ptr, std.mem.asBytes(nxt));
     }
     if (value.value) |val| {
-      {
-        const bytes = std.mem.toBytes(val.deathat);
-        @memcpy(ptr[0..bytes.len], bytes[0..]);
-        ptr = ptr[bytes.len..];
-      }
-      {
-        const bytes = std.mem.toBytes(@as(u16, @intCast(val.str.len)));
-        @memcpy(ptr[0..bytes.len], bytes[0..]);
-        ptr = ptr[bytes.len..];
-      }
+      copyAndIncrement(&ptr, &std.mem.toBytes(val.deathat));
+      copyAndIncrement(&ptr, &std.mem.toBytes(@as(u16, @intCast(val.str.len))));
     }
     if (value.str) |str| {
-      {
-        const bytes = std.mem.toBytes(@as(u16, @intCast(str.len)));
-        @memcpy(ptr[0..bytes.len], bytes[0..]);
-        ptr = ptr[bytes.len..];
-      }
-      {
-        const bytes = str;
-        @memcpy(ptr[0..bytes.len], bytes);
-        ptr = ptr[bytes.len..];
-      }
+      copyAndIncrement(&ptr, &std.mem.toBytes(@as(u16, @intCast(str.len))));
+      copyAndIncrement(&ptr, str);
     }
     if (value.value) |val| {
-      const bytes = val.str;
-      @memcpy(ptr[0..bytes.len], bytes);
-      ptr = ptr[bytes.len..];
+      copyAndIncrement(&ptr, val.str);
     }
 
-    return @ptrFromInt(@intFromPtr(memory.ptr) | mask);
+    return retval;
   }
 
   fn getNext(self: *@This()) ?*NextType {
     var ptr = @intFromPtr(self);
-    const mask: u64 = 0b111;
     const existence = ptr & mask;
     ptr &= ~mask;
 
@@ -254,7 +258,6 @@ const Node = opaque {
 
   fn getNextAndStr(self: *@This()) UnpackedNodeValues {
     var ptr = @intFromPtr(self);
-    const mask: u64 = 0b111;
     const existence = ptr & mask;
     ptr &= ~mask;
 
@@ -287,7 +290,6 @@ const Node = opaque {
 
   fn getComponents(self: *@This()) UnpackedNodeValues {
     var ptr = @intFromPtr(self);
-    const mask: u64 = 0b111;
     const existence = ptr & mask;
     ptr &= ~mask;
 
@@ -335,7 +337,6 @@ const Node = opaque {
 
   fn getNodeMemory(self: *@This()) []align(@sizeOf(usize)) u8 {
     var ptr = @intFromPtr(self);
-    const mask: u64 = 0b111;
     const existence = ptr & mask;
     ptr &= ~mask;
 
@@ -411,28 +412,11 @@ test Node {
 // # - implementation of the radix trie - #
 // ########################################
 
-const RadixTrie = struct {
+pub const RadixTrie = struct {
   head: Node.NextType = Node.NextTypeNull,
   allocator: std.mem.Allocator,
 
-  pub fn get(self: *@This(), constKey: []const u8) ?Node.Value {
-    var key = constKey;
-    if (!isUrlValid(key)) return null;
-
-    var next = &self.head;
-    while (true) {
-      const node = next[indexFromCharacter(key[0])] orelse return null;
-      key = key[1..];
-      const val = node.getComponents();
-      if (val.str) |str| {
-        if (str.len > key.len and !std.mem.eql(u8, str, key[0..str.len])) return null;
-        key = key[str.len..];
-      }
-      if (key.len == 0) return val.value;
-      next = val.next orelse return null;
-    }
-  }
-
+  /// A helper function for add
   fn getHeadIndexDiff(self: *@This(), constKey: []const u8) struct {
     node: *?*Node,
     diff: usize,
@@ -483,7 +467,8 @@ const RadixTrie = struct {
     }
   }
 
-  fn add(self: *@This(), key: []const u8, dest: []const u8, deathat: i64) !void {
+  /// Add a new key-value pair to the trie
+  pub fn add(self: *@This(), key: []const u8, dest: []const u8, deathat: i64) !void {
     if (!isUrlValid(key)) return error.InvalidKey;
     var diff = self.getHeadIndexDiff(key);
 
@@ -575,25 +560,140 @@ const RadixTrie = struct {
     diff.node.* = newNode;
   }
 
-  fn freeRecursiveNoConsequence(self: *@This(), head: *const ?*Node) void {
-    if (head.* == null) return;
-    if (head.*.?.getNext()) |next| {
-      for (0..TotalCharacterCount) |idx| {
-        self.freeRecursiveNoConsequence(&next[idx]);
+  /// Get the value associated with a key if it exists
+  pub fn get(self: *@This(), constKey: []const u8) ?Node.Value {
+    if (!isUrlValid(constKey)) return null;
+
+    var key = constKey;
+    var next = &self.head;
+    while (true) {
+      const node = next[indexFromCharacter(key[0])] orelse return null;
+      key = key[1..];
+      const val = node.getComponents();
+      if (val.str) |str| {
+        if (str.len > key.len and !std.mem.eql(u8, str, key[0..str.len])) return null;
+        key = key[str.len..];
       }
+      if (key.len == 0) return val.value;
+      next = val.next orelse return null;
     }
-    head.*.?.freeNode(self.allocator);
+  }
+
+  fn merge(self: *@This(), prev: UnpackedNodeValues, childIndex: u8, child: UnpackedNodeValues) !*Node {
+    std.debug.assert(prev.next == null);
+    std.debug.assert(prev.value == null);
+
+    const strlen = (if (prev.str) |str| str.len else 0) + (if (child.str) |str| str.len else 0) + 1;
+    const mergedNode = try Node.newUnfilledSized(
+      self.allocator,
+      child.next != null,
+      strlen,
+      if (child.value) |childVal| childVal.str.len else 0,
+    );
+    var mergedPtr: [*]u8 = @ptrFromInt(@intFromPtr(mergedNode) & ~Node.mask);
+    if (child.next) |childNext| {
+      Node.copyAndIncrement(&mergedPtr, std.mem.asBytes(childNext));
+    }
+    if (child.value) |childValue| {
+      Node.copyAndIncrement(&mergedPtr, &std.mem.toBytes(childValue.deathat));
+      Node.copyAndIncrement(&mergedPtr, &std.mem.toBytes(@as(u16, @intCast(childValue.str.len))));
+    }
+    Node.copyAndIncrement(&mergedPtr, &std.mem.toBytes(@as(u16, @intCast(strlen))));
+    if (prev.str) |str| {
+      Node.copyAndIncrement(&mergedPtr, str);
+    }
+    Node.copyAndIncrement(&mergedPtr, &[_]u8{characterFromIndex(childIndex)});
+    if (child.str) |childStr| {
+      Node.copyAndIncrement(&mergedPtr, childStr);
+    }
+    if (child.value) |childValue| {
+      Node.copyAndIncrement(&mergedPtr, childValue.str);
+    }
+
+    return mergedNode;
+  }
+
+  pub fn delete(self: *@This(), constKey: []const u8) !void {
+    if (!isUrlValid(constKey)) return error.InvalidKey;
+    var key = constKey;
+    var parentPtr: ?**Node = null;
+    var next = &self.head;
+    while (true) {
+      const idx = indexFromCharacter(key[0]);
+      const node = next[idx] orelse return error.KeyNotFound;
+      key = key[1..];
+      const val = node.getComponents();
+      if (val.str) |str| {
+        if (str.len > key.len and !std.mem.eql(u8, str, key[0..str.len])) return error.KeyNotFound;
+        key = key[str.len..];
+      }
+
+      if (key.len == 0) { // Remove the node
+        var childrenCount: u8 = 0;
+        if (val.next) |valNext| {
+          for (valNext) |child| childrenCount += if (child != null) 1 else 0;
+        }
+
+        if (childrenCount == 0) { // Remove
+          node.freeNode(self.allocator);
+          next[idx] = null;
+        } else if (childrenCount == 1) { // Merge
+          const childIndex = blk: {
+            for (val.next.?, 0..) |child, i| if (child != null) break :blk i;
+            unreachable;
+          };
+          const childComponents = val.next.?[childIndex].?.getComponents();
+          const merged = try self.merge(.{ .next = null, .value = null, .str = val.str }, @intCast(childIndex), childComponents);
+          val.next.?[childIndex].?.freeNode(self.allocator);
+          node.freeNode(self.allocator);
+          next[idx] = merged;
+        } else { return; } // Node with multiple children cant be merged
+        if (parentPtr == null) return; // The node is in the head, so cant do nothing
+
+        var siblingsCount: u8 = 0;
+        for (next) |valSibling| siblingsCount += if (valSibling != null) 1 else 0;
+        if (siblingsCount > 1) return;  // Cant do anything for nodes with multiple siblings
+
+        var parentComponents = parentPtr.?.*.getComponents();
+        std.debug.assert(parentComponents.value != null or siblingsCount != 0);
+        parentComponents.next = null;
+
+        if (siblingsCount == 0) {
+          const newNode = try Node.new(self.allocator, parentComponents);
+          parentPtr.?.*.freeNode(self.allocator);
+          parentPtr.?.* = newNode;
+        } else if (siblingsCount == 1 and parentComponents.value == null) { // Merge parent and sibling
+          const siblingIndex = blk: {
+            for (parentComponents.next.?, 0..) |sibling, i| if (sibling != null) break :blk i;
+            unreachable;
+          };
+          const merged = try self.merge(parentComponents, @intCast(siblingIndex), parentComponents.next.?[siblingIndex].?.getComponents());
+          parentPtr.?.*.freeNode(self.allocator);
+          parentPtr.?.* = merged;
+        }
+        return;
+      } // <- Remove the node
+
+      parentPtr = &next[idx].?;
+      next = val.next orelse return error.KeyNotFound;
+    }
+  }
+
+  /// Free a node recursively
+  fn freeRecursiveNoConsequence(self: *@This(), nullableHead: ?*Node) void {
+    const head = nullableHead orelse return;
+    defer head.freeNode(self.allocator);
+    const next = head.getNext() orelse return;
+    for (next) |node| self.freeRecursiveNoConsequence(node);
   }
 
   fn freeRecursive(self: *@This(), head: *?*Node) void {
-    freeRecursiveNoConsequence(self, head);
+    freeRecursiveNoConsequence(self, head.*);
     head.* = null;
   }
 
   pub fn deinit(self: *@This()) void {
-    for (0..TotalCharacterCount) |idx| {
-      self.freeRecursive(&self.head[idx]);
-    }
+    for (0..TotalCharacterCount) |idx| self.freeRecursive(&self.head[idx]);
   }
 };
 
@@ -611,26 +711,18 @@ test RadixTrie {
 
   comptime var addArgs: []const AddArgsType = &.{};
   addArgs = addArgs ++ &[_]AddArgsType{
-    .{ .key = "foo/bar/baz", .deathat = 0, .dest = "https://example.com/foo/bar/baz" },
-    .{ .key = "foo/bar/baz/qux", .deathat = 1, .dest = "https://example.com/foo/bar/baz/qux" },
-    .{ .key = "foo/bar/baz/qux/quux", .deathat = 2, .dest = "https://example.com/foo/bar/baz/qux/quux" },
-    .{ .key = "foo/bar/baz/qux/quux/quuux", .deathat = 3, .dest = "https://example.com/foo/bar/baz/qux/quux/quuux" },
-    .{ .key = "foo/bar/baz/qux/quux/quuux/quuuux", .deathat = 4, .dest = "https://example.com/foo/bar/baz/qux/quux/quuux/quuuux" },
+    .{ .key = "foo", .deathat = 0, .dest = "https://example.com/foo" },
+    .{ .key = "foo/bar", .deathat = 1, .dest = "https://example.com/foo/bar" },
   };
-
-  inline for (0..1000) |i| {
-    const key = std.fmt.comptimePrint("foo{d}", .{i});
+  inline for (0..100) |i| {
+    const key = std.fmt.comptimePrint("{d}", .{i});
     addArgs = addArgs ++ &[_]AddArgsType{
       .{ .key = key, .deathat = 5, .dest = "https://example.com/" ++ key },
     };
   }
-
   addArgs = addArgs ++ &[_]AddArgsType{
-    .{ .key = "foo/bar/baz", .deathat = 0, .dest = "https://example.com/foo/bar/baz" },
-    .{ .key = "foo/bar/baz/qux", .deathat = 1, .dest = "https://example.com/foo/bar/baz/qux" },
-    .{ .key = "foo/bar/baz/qux/quux", .deathat = 2, .dest = "https://example.com/foo/bar/baz/qux/quux" },
-    .{ .key = "foo/bar/baz/qux/quux/quuux", .deathat = 3, .dest = "https://example.com/foo/bar/baz/qux/quux/quuux" },
-    .{ .key = "foo/bar/baz/qux/quux/quuux/quuuux", .deathat = 4, .dest = "https://example.com/foo/bar/baz/qux/quux/quuux/quuuux" },
+    .{ .key = "foo", .deathat = 0, .dest = "https://example.com/foo" },
+    .{ .key = "foo/bar", .deathat = 1, .dest = "https://example.com/foo/bar" },
   };
 
   for (addArgs, 0..) |args, idx| {
@@ -641,8 +733,17 @@ test RadixTrie {
       try std.testing.expectEqualStrings(a.dest, val.str);
     }
   }
-}
 
+  const removeArgs = addArgs[2..];
+  for (removeArgs, 0..) |args, idx| {
+    try trie.delete(args.key);
+    for (removeArgs[idx+1..]) |a| {
+      const val = trie.get(a.key).?;
+      try std.testing.expectEqual(a.deathat, val.deathat);
+      try std.testing.expectEqualStrings(a.dest, val.str);
+    }
+  }
+}
 
 test {
   std.testing.refAllDeclsRecursive(@This());
