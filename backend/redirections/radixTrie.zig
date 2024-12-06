@@ -175,20 +175,21 @@ test "indexFromCharacter and characterFromIndex" {
 const UnpackedNodeValues = struct {
   next: ?*Node.NextType align(@sizeOf(usize)),
   value: ?Node.Value align(@sizeOf(usize)),
-  str: ?[]u8 align(@sizeOf(usize)),
+  str: ?[]const u8 align(@sizeOf(usize)),
 };
 
 const Node = opaque {
   pub const Value = struct {
     deathat: i64,
-    str: []u8,
+    str: []const u8,
   };
 
   pub const NextType = [TotalCharacterCount]?*Node;
   pub const NextTypeNull = [_]?*Node{null} ** TotalCharacterCount;
   pub const NextTypeSize = @sizeOf(NextType);
 
-  fn new(allocator: std.mem.Allocator, value: UnpackedNodeValues) !*@This() {
+  fn new(allocator: std.mem.Allocator, constValue: UnpackedNodeValues) !*@This() {
+    var value = constValue;
     if (value.str) |str| { if (str.len == 0) value.str = null; }
 
     var mask: usize = 0;
@@ -411,17 +412,18 @@ test Node {
 // ########################################
 
 const RadixTrie = struct {
-  head: Node.NextType,
+  head: Node.NextType = Node.NextTypeNull,
   allocator: std.mem.Allocator,
 
-  pub fn get(self: *@This(), key: []const u8) ?Node.Value {
+  pub fn get(self: *@This(), constKey: []const u8) ?Node.Value {
+    var key = constKey;
     if (!isUrlValid(key)) return null;
 
     var next = &self.head;
     while (true) {
       const node = next[indexFromCharacter(key[0])] orelse return null;
       key = key[1..];
-      const val = node.getComponents(self.head, key);
+      const val = node.getComponents();
       if (val.str) |str| {
         if (str.len > key.len and !std.mem.eql(u8, str, key[0..str.len])) return null;
         key = key[str.len..];
@@ -431,37 +433,38 @@ const RadixTrie = struct {
     }
   }
 
-  fn getHeadIndexDiff(self: *@This(), key: []const u8) struct {
-    head: *Node.NextType,
-    idx: u8,
+  fn getHeadIndexDiff(self: *@This(), constKey: []const u8) struct {
+    node: *?*Node,
     diff: usize,
     remaining: []const u8,
   } {
+    var key = constKey;
     var next = &self.head;
+
     while (true) {
       const idx = indexFromCharacter(key[0]);
       key = key[1..];
+      // -> Case 1
       const node: *Node = next[idx] orelse return .{
-        .head = next,
-        .idx = idx,
-        .diff = 0,
+        .node = &next[idx],
+        .diff = undefined,
         .remaining = key,
       };
 
-      const val = node.getNextAndStr(self.head, key);
+      const val = node.getNextAndStr();
       if (val.str) |str| {
         const minLen = @min(str.len, key.len);
         if (indexOfDiff(u8, str[0..minLen], key[0..minLen])) |diff| {
+          // -> Case 2
           return .{
-            .head = next,
-            .idx = idx,
+            .node = &next[idx],
             .diff = diff,
             .remaining = key[diff..],
           };
-        } else if (key.len <= str.len) {
+        } else if (key.len < str.len) {
+          // -> Case 3
           return .{
-            .head = next,
-            .idx = idx,
+            .node = &next[idx],
             .diff = key.len,
             .remaining = key[key.len..],
           };
@@ -469,12 +472,14 @@ const RadixTrie = struct {
         key = key[minLen..];
       }
 
-      next = val.next orelse return .{
-        .head = next,
-        .idx = idx,
-        .diff = if (val.str) |str| str.len else 0,
+      // -> Case 4
+      if (key.len == 0 or val.next == null) return .{
+        .node = &next[idx],
+        .diff = 0,
         .remaining = key,
       };
+
+      next = val.next.?;
     }
   }
 
@@ -482,54 +487,162 @@ const RadixTrie = struct {
     if (!isUrlValid(key)) return error.InvalidKey;
     var diff = self.getHeadIndexDiff(key);
 
-    if (diff.diff == 0) {
-      if (diff.head[diff.idx]) |*node| { // Value only node
-        const components = node.*.getComponents();
-        std.debug.assert(components.next == null);
+    // -> Case 1
+    if (diff.node.* == null) {
+      diff.node.* = try Node.new(self.allocator, .{
+        .next = null,
+        .value = .{ .str = dest, .deathat = deathat },
+        .str = diff.remaining,
+      });
+      return;
+    }
 
-        if (diff.remaining.len == 0) { // Replace old value
-          components.value = .{
-            .str = dest,
-            .deathat = deathat,
-          };
-          const newNode = try Node.new(self.allocator, components);
-          // Free after creation to prevent corruption if allocation fails
-          node.*.freeNode(self.allocator);
-          node.* = newNode;
-        } else {
-          const idx = indexFromCharacter(diff.remaining[0]);
-          diff.remaining = diff.remaining[1..];
-          var nextArr: Node.NextType = Node.NextTypeNull;
-          nextArr[idx] = try Node.new(self.allocator, .{
-            .value = .{ .str = dest, .deathat = deathat },
-            .str = diff.remaining,
-          });
-          errdefer nextArr[idx].?.freeNode(self.allocator);
+    var components = diff.node.*.?.getComponents();
 
-          components.next = &nextArr;
-          const newNode = try Node.new(self.allocator, components);
-          node.*.freeNode(self.allocator);
-          node.* = newNode;
-        }
-      } else {
-        // No node at idx
-        diff.head[diff.idx] = try Node.new(self.allocator, .{
-          .next = Node.NextTypeNull,
+    // -> Case 4 (1 nodes to be added, 1 to be removed)
+    if (diff.diff == 0) { // Value only node
+      if (diff.remaining.len == 0) { // Replace old value
+        components.value = .{ .str = dest, .deathat = deathat };
+        const newNode = try Node.new(self.allocator, components);
+        diff.node.*.?.freeNode(self.allocator);
+        diff.node.* = newNode;
+      } else { // Add new value and make the node non-terminal
+        const idx = indexFromCharacter(diff.remaining[0]);
+        diff.remaining = diff.remaining[1..];
+        var nextArr: Node.NextType = Node.NextTypeNull;
+        nextArr[idx] = try Node.new(self.allocator, .{
+          .next = components.next,
           .value = .{ .str = dest, .deathat = deathat },
           .str = diff.remaining,
         });
+        errdefer nextArr[idx].?.freeNode(self.allocator);
+
+        components.next = &nextArr;
+        const newNode = try Node.new(self.allocator, components);
+        diff.node.*.?.freeNode(self.allocator);
+        diff.node.* = newNode;
       }
-
       return;
-    } // diff.diff == 0
+    }
 
-    std.debug.assert(diff.head[diff.idx] != null);
-    const node = &diff.head[diff.idx].?;
-    const components = node.*.getComponents();
-    if (components.next == null) {}
+    // -> Case 3 (3 nodes to be added, 1 to be removed)
+    if (diff.remaining.len == 0) {
+      var nextArr: Node.NextType = Node.NextTypeNull;
+      const idx = indexFromCharacter(components.str.?[diff.diff]);
+      nextArr[idx] = try Node.new(self.allocator, .{
+        .next = components.next,
+        .value = components.value,
+        .str = components.str.?[diff.diff+1..],
+      });
+      errdefer nextArr[idx].?.freeNode(self.allocator);
 
+      const nodeBefore = try Node.new(self.allocator, .{
+        .next = &nextArr,
+        .value = .{ .str = dest, .deathat = deathat },
+        .str = null,
+      });
+
+      diff.node.*.?.freeNode(self.allocator);
+      diff.node.* = nodeBefore;
+      return;
+    }
+
+    // -> Case 2 (3 nodes to be added, 1 to be removed)
+    var nextArr: Node.NextType = Node.NextTypeNull;
+    const oldValIdx = indexFromCharacter(components.str.?[diff.diff]);
+    nextArr[oldValIdx] = try Node.new(self.allocator, .{
+      .next = components.next,
+      .value = components.value,
+      .str = components.str.?[diff.diff+1..],
+    });
+    errdefer nextArr[oldValIdx].?.freeNode(self.allocator);
+
+    const newValIdx = indexFromCharacter(diff.remaining[0]);
+    nextArr[newValIdx] = try Node.new(self.allocator, .{
+      .next = null,
+      .value = .{ .str = dest, .deathat = deathat },
+      .str = diff.remaining[1..],
+    });
+    errdefer nextArr[newValIdx].?.freeNode(self.allocator);
+
+    const newNode = try Node.new(self.allocator, .{
+      .next = &nextArr,
+      .value = null,
+      .str = components.str.?[0..diff.diff],
+    });
+
+    diff.node.*.?.freeNode(self.allocator);
+    diff.node.* = newNode;
+  }
+
+  fn freeRecursiveNoConsequence(self: *@This(), head: *const ?*Node) void {
+    if (head.* == null) return;
+    if (head.*.?.getNext()) |next| {
+      for (0..TotalCharacterCount) |idx| {
+        self.freeRecursiveNoConsequence(&next[idx]);
+      }
+    }
+    head.*.?.freeNode(self.allocator);
+  }
+
+  fn freeRecursive(self: *@This(), head: *?*Node) void {
+    freeRecursiveNoConsequence(self, head);
+    head.* = null;
+  }
+
+  pub fn deinit(self: *@This()) void {
+    for (0..TotalCharacterCount) |idx| {
+      self.freeRecursive(&self.head[idx]);
+    }
   }
 };
+
+test RadixTrie {
+  const allocator = std.testing.allocator;
+  var trie = RadixTrie{ .allocator = allocator };
+  defer trie.deinit();
+
+  // -> Test add
+  const AddArgsType = struct {
+    key: []const u8,
+    deathat: i64,
+    dest: []const u8,
+  };
+
+  comptime var addArgs: []const AddArgsType = &.{};
+  addArgs = addArgs ++ &[_]AddArgsType{
+    .{ .key = "foo/bar/baz", .deathat = 0, .dest = "https://example.com/foo/bar/baz" },
+    .{ .key = "foo/bar/baz/qux", .deathat = 1, .dest = "https://example.com/foo/bar/baz/qux" },
+    .{ .key = "foo/bar/baz/qux/quux", .deathat = 2, .dest = "https://example.com/foo/bar/baz/qux/quux" },
+    .{ .key = "foo/bar/baz/qux/quux/quuux", .deathat = 3, .dest = "https://example.com/foo/bar/baz/qux/quux/quuux" },
+    .{ .key = "foo/bar/baz/qux/quux/quuux/quuuux", .deathat = 4, .dest = "https://example.com/foo/bar/baz/qux/quux/quuux/quuuux" },
+  };
+
+  inline for (0..1000) |i| {
+    const key = std.fmt.comptimePrint("foo{d}", .{i});
+    addArgs = addArgs ++ &[_]AddArgsType{
+      .{ .key = key, .deathat = 5, .dest = "https://example.com/" ++ key },
+    };
+  }
+
+  addArgs = addArgs ++ &[_]AddArgsType{
+    .{ .key = "foo/bar/baz", .deathat = 0, .dest = "https://example.com/foo/bar/baz" },
+    .{ .key = "foo/bar/baz/qux", .deathat = 1, .dest = "https://example.com/foo/bar/baz/qux" },
+    .{ .key = "foo/bar/baz/qux/quux", .deathat = 2, .dest = "https://example.com/foo/bar/baz/qux/quux" },
+    .{ .key = "foo/bar/baz/qux/quux/quuux", .deathat = 3, .dest = "https://example.com/foo/bar/baz/qux/quux/quuux" },
+    .{ .key = "foo/bar/baz/qux/quux/quuux/quuuux", .deathat = 4, .dest = "https://example.com/foo/bar/baz/qux/quux/quuux/quuuux" },
+  };
+
+  for (addArgs, 0..) |args, idx| {
+    try trie.add(args.key, args.dest, args.deathat);
+    for (addArgs[0..idx]) |a| {
+      const val = trie.get(a.key).?;
+      try std.testing.expectEqual(a.deathat, val.deathat);
+      try std.testing.expectEqualStrings(a.dest, val.str);
+    }
+  }
+}
+
 
 test {
   std.testing.refAllDeclsRecursive(@This());
