@@ -4,9 +4,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 
-// ##########################
-// # - eql implementation - #
-// ##########################
+// ##############################################
+// # - implementation of some slice functions - #
+// ##############################################
 
 const eqlBytes_allowed = switch (builtin.zig_backend) {
   .stage2_spirv64, .stage2_riscv64 => false,
@@ -74,6 +74,13 @@ fn eqlBytes(a: []const u8, b: []const u8) bool {
   const last_a_chunk: Scan.Chunk = @bitCast(a[a.len - Scan.size ..][0..Scan.size].*);
   const last_b_chunk: Scan.Chunk = @bitCast(b[a.len - Scan.size ..][0..Scan.size].*);
   return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
+}
+
+pub fn indexOfDiff(comptime T: type, a: []const T, b: []const T) ?usize {
+  const shortest = @min(a.len, b.len);
+  var index: usize = 0;
+  while (index < shortest): (index += 1) if (a[index] != b[index]) return index;
+  return if (a.len == b.len) null else shortest;
 }
 
 // ###################################
@@ -162,7 +169,7 @@ test "indexFromCharacter and characterFromIndex" {
 }
 
 // ############################################
-// # - a convoluted but efficient node impl - # 
+// # - a convoluted but efficient node impl - #
 // ############################################
 
 const UnpackedNodeValues = struct {
@@ -178,16 +185,19 @@ const Node = opaque {
   };
 
   pub const NextType = [TotalCharacterCount]?*Node;
-  pub const NextSize = @sizeOf(NextType);
+  pub const NextTypeNull = [_]?*Node{null} ** TotalCharacterCount;
+  pub const NextTypeSize = @sizeOf(NextType);
 
   fn new(allocator: std.mem.Allocator, value: UnpackedNodeValues) !*@This() {
+    if (value.str) |str| { if (str.len == 0) value.str = null; }
+
     var mask: usize = 0;
     if (value.next != null) mask |= 0b100;
     if (value.value != null) mask |= 0b010;
     if (value.str != null) mask |= 0b001;
 
     var size: usize = 0;
-    if (value.next != null) size += NextSize;
+    if (value.next != null) size += NextTypeSize;
     if (value.value) |val| size += @sizeOf(i64) + @sizeOf(u16) + val.str.len;
     if (value.str) |str| size += @sizeOf(u16) + str.len;
 
@@ -250,7 +260,7 @@ const Node = opaque {
     var next: ?*NextType = undefined;
     if (existence & 0b100 != 0) {
       next = @ptrFromInt(ptr);
-      ptr += NextSize;
+      ptr += NextTypeSize;
     } else {
       next = null;
     }
@@ -283,7 +293,7 @@ const Node = opaque {
     var next: ?*NextType = undefined;
     if (existence & 0b100 != 0) {
       next = @ptrFromInt(ptr);
-      ptr += NextSize;
+      ptr += NextTypeSize;
     } else {
       next = null;
     }
@@ -331,8 +341,8 @@ const Node = opaque {
     const memory: [*]align(@sizeOf(usize)) u8 = @ptrFromInt(ptr);
     var size: usize = 0;
     if (existence & 0b100 != 0) {
-      size += NextSize;
-      ptr += NextSize;
+      size += NextTypeSize;
+      ptr += NextTypeSize;
     }
 
     if (existence & 0b010 != 0) {
@@ -404,37 +414,121 @@ const RadixTrie = struct {
   head: Node.NextType,
   allocator: std.mem.Allocator,
 
+  pub fn get(self: *@This(), key: []const u8) ?Node.Value {
+    if (!isUrlValid(key)) return null;
 
-  // fn getFirstNonMatching(node: TaggedUnitedNode, key: []const u8) !TaggedUnitedNode {
-  //   while (key.len > 0) {
-  //     const idx = indexFromCharacter(key[0]);
-  //     if (node.getNodes().nodePointers[idx] == null) {
-  //       return node;
-  //     }
-  //     if (node.getChildrenCount() == 0) {
-  //       return node;
-  //     }
-  //     node = node.getNodes().nodePointers[idx].?;
-  //   }
-  //   return node;
-  // }
+    var next = &self.head;
+    while (true) {
+      const node = next[indexFromCharacter(key[0])] orelse return null;
+      key = key[1..];
+      const val = node.getComponents(self.head, key);
+      if (val.str) |str| {
+        if (str.len > key.len and !std.mem.eql(u8, str, key[0..str.len])) return null;
+        key = key[str.len..];
+      }
+      if (key.len == 0) return val.value;
+      next = val.next orelse return null;
+    }
+  }
 
-  // fn addNodes(self: *@This(), node: TaggedUnitedNode, key: []const u8) !TaggedUnitedNode {
-  //   while (key.len > 0) {
-  //     const idx = indexFromCharacter(key[0]);
-  //     const children = node.getNodes();
-  //     const next = children.get(idx);
-  //     if (!next.exists()) return next;
-  //     if (children.nodePointers[idx] == null) {
-  //       children.set(idx, try Strin);
-  //     }
-  //     if (node.getChildrenCount() == 0) {
-  //     }
-  //     if (key)
-  //
-  //     key = key[1..];
-  //   }
-  // }
+  fn getHeadIndexDiff(self: *@This(), key: []const u8) struct {
+    head: *Node.NextType,
+    idx: u8,
+    diff: usize,
+    remaining: []const u8,
+  } {
+    var next = &self.head;
+    while (true) {
+      const idx = indexFromCharacter(key[0]);
+      key = key[1..];
+      const node: *Node = next[idx] orelse return .{
+        .head = next,
+        .idx = idx,
+        .diff = 0,
+        .remaining = key,
+      };
+
+      const val = node.getNextAndStr(self.head, key);
+      if (val.str) |str| {
+        const minLen = @min(str.len, key.len);
+        if (indexOfDiff(u8, str[0..minLen], key[0..minLen])) |diff| {
+          return .{
+            .head = next,
+            .idx = idx,
+            .diff = diff,
+            .remaining = key[diff..],
+          };
+        } else if (key.len <= str.len) {
+          return .{
+            .head = next,
+            .idx = idx,
+            .diff = key.len,
+            .remaining = key[key.len..],
+          };
+        }
+        key = key[minLen..];
+      }
+
+      next = val.next orelse return .{
+        .head = next,
+        .idx = idx,
+        .diff = if (val.str) |str| str.len else 0,
+        .remaining = key,
+      };
+    }
+  }
+
+  fn add(self: *@This(), key: []const u8, dest: []const u8, deathat: i64) !void {
+    if (!isUrlValid(key)) return error.InvalidKey;
+    var diff = self.getHeadIndexDiff(key);
+
+    if (diff.diff == 0) {
+      if (diff.head[diff.idx]) |*node| { // Value only node
+        const components = node.*.getComponents();
+        std.debug.assert(components.next == null);
+
+        if (diff.remaining.len == 0) { // Replace old value
+          components.value = .{
+            .str = dest,
+            .deathat = deathat,
+          };
+          const newNode = try Node.new(self.allocator, components);
+          // Free after creation to prevent corruption if allocation fails
+          node.*.freeNode(self.allocator);
+          node.* = newNode;
+        } else {
+          const idx = indexFromCharacter(diff.remaining[0]);
+          diff.remaining = diff.remaining[1..];
+          var nextArr: Node.NextType = Node.NextTypeNull;
+          nextArr[idx] = try Node.new(self.allocator, .{
+            .value = .{ .str = dest, .deathat = deathat },
+            .str = diff.remaining,
+          });
+          errdefer nextArr[idx].?.freeNode(self.allocator);
+
+          components.next = &nextArr;
+          const newNode = try Node.new(self.allocator, components);
+          node.*.freeNode(self.allocator);
+          node.* = newNode;
+        }
+      } else {
+        // No node at idx
+        diff.head[diff.idx] = try Node.new(self.allocator, .{
+          .next = Node.NextTypeNull,
+          .value = .{ .str = dest, .deathat = deathat },
+          .str = diff.remaining,
+        });
+      }
+
+      return;
+    } // diff.diff == 0
+
+    std.debug.assert(diff.head[diff.idx] != null);
+    const node = &diff.head[diff.idx].?;
+    const components = node.*.getComponents();
+    if (components.next == null) {}
+
+  }
 };
 
 test {
