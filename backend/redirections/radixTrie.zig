@@ -1,4 +1,6 @@
 //! An efficient radix trie implementation
+//! Uses memory alignment as tags to existence of next, value, and string
+//! and only makes 1 allocation for the node (node includes the value)
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -172,9 +174,9 @@ test "indexFromCharacter and characterFromIndex" {
 // ############################################
 
 const UnpackedNodeValues = struct {
-  next: ?*Node.NextType align(@sizeOf(usize)),
-  value: ?Node.Value align(@sizeOf(usize)),
-  str: ?[]const u8 align(@sizeOf(usize)),
+  next: ?*Node.NextType align(8),
+  value: ?Node.Value align(8),
+  str: ?[]const u8 align(8),
 };
 
 const Node = opaque {
@@ -334,12 +336,12 @@ const Node = opaque {
     };
   }
 
-  fn getNodeMemory(self: *@This()) []align(@sizeOf(usize)) u8 {
+  fn getNodeMemory(self: *@This()) []align(8) u8 {
     var ptr = @intFromPtr(self);
     const existence = ptr & mask;
     ptr &= ~mask;
 
-    const memory: [*]align(@sizeOf(usize)) u8 = @ptrFromInt(ptr);
+    const memory: [*]align(8) u8 = @ptrFromInt(ptr);
     var size: usize = 0;
     if (existence & 0b100 != 0) {
       size += NextTypeSize;
@@ -745,7 +747,6 @@ test RadixTrie {
     .dest = "https://example.com/20",
   });
 
-  std.debug.print("testing add\n", .{});
   const addArgs = try addArgsList.toOwnedSlice();
   for (addArgs, 0..) |args, idx| {
     try trie.add(args.key, args.dest, args.deathat);
@@ -756,7 +757,6 @@ test RadixTrie {
     }
   }
 
-  std.debug.print("testing remove\n", .{});
   const removeArgs = addArgs[2..];
   for (removeArgs, 0..) |args, idx| {
     try trie.delete(args.key);
