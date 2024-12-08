@@ -189,27 +189,42 @@ const Node = opaque {
   const NextTypeNull = [_]?*Node{null} ** TotalCharacterCount;
   const NextTypeSize = @sizeOf(NextType);
 
-  const mask: usize = 0b111;
+  const MaskNext: usize = 0b100;
+  const MaskValue: usize = 0b010;
+  const MaskStr: usize = 0b001;
+  const Mask: usize = MaskNext | MaskValue | MaskStr;
+
+  fn hasNext(self: *const @This()) bool {
+    return @intFromPtr(self) & MaskNext != 0;
+  }
+
+  fn hasValue(self: *const @This()) bool {
+    return @intFromPtr(self) & MaskValue != 0;
+  }
+
+  fn hasStr(self: *const @This()) bool {
+    return @intFromPtr(self) & MaskStr != 0;
+  }
 
   fn newUnfilledSized(allocator: std.mem.Allocator, next: bool, strlen: usize, valstrlen: usize) !*@This() {
-    var maskValue: usize = 0;
+    var mask: usize = 0;
     var size: usize = 0;
 
     if (next) {
-      maskValue |= 0b100;
+      mask |= MaskNext;
       size += NextTypeSize;
     }
     if (valstrlen != 0) {
-      maskValue |= 0b010;
+      mask |= MaskValue;
       size += @sizeOf(i64) + @sizeOf(u16) + valstrlen;
     }
     if (strlen != 0) {
-      maskValue |= 0b001;
+      mask |= MaskStr;
       size += @sizeOf(u16) + strlen;
     }
 
     const memory = try allocator.alignedAlloc(u8, 8, size);
-    return @ptrFromInt(@intFromPtr(memory.ptr) | maskValue);
+    return @ptrFromInt(@intFromPtr(memory.ptr) | mask);
   }
 
   fn copyAndIncrement(ptr: *[*]u8, bytes: []const u8) void {
@@ -228,7 +243,7 @@ const Node = opaque {
       if (value.value) |val| val.str.len else 0
     );
 
-    var ptr: [*]u8 = @ptrFromInt(@intFromPtr(retval) & ~mask);
+    var ptr: [*]u8 = @ptrFromInt(@intFromPtr(retval) & ~Mask);
 
     if (value.next) |nxt| {
       copyAndIncrement(&ptr, std.mem.asBytes(nxt));
@@ -250,8 +265,8 @@ const Node = opaque {
 
   fn getNext(self: *@This()) ?*NextType {
     var ptr = @intFromPtr(self);
-    const existence = ptr & mask;
-    ptr &= ~mask;
+    const existence = ptr & Mask;
+    ptr &= ~Mask;
 
     if (existence & 0b100 == 0) { return null; }
     return @ptrFromInt(ptr);
@@ -259,23 +274,23 @@ const Node = opaque {
 
   fn getNextAndStr(self: *@This()) UnpackedNodeValues {
     var ptr = @intFromPtr(self);
-    const existence = ptr & mask;
-    ptr &= ~mask;
+    const existence = ptr & Mask;
+    ptr &= ~Mask;
 
     var next: ?*NextType = undefined;
-    if (existence & 0b100 != 0) {
+    if (existence & MaskNext != 0) {
       next = @ptrFromInt(ptr);
       ptr += NextTypeSize;
     } else {
       next = null;
     }
 
-    if (existence & 0b010 != 0) {
+    if (existence & MaskValue != 0) {
       ptr += @sizeOf(i64) + @sizeOf(u16);
     }
 
     var str: ?[]u8 = undefined;
-    if (existence & 0b001 != 0) {
+    if (existence & MaskStr != 0) {
       str = @as([*]u8, @ptrFromInt(ptr + @sizeOf(u16)))[0.. @as(*u16, @ptrFromInt(ptr)).*];
       ptr += @sizeOf(u16) + str.?.len;
     } else {
@@ -291,8 +306,8 @@ const Node = opaque {
 
   fn getComponents(self: *@This()) UnpackedNodeValues {
     var ptr = @intFromPtr(self);
-    const existence = ptr & mask;
-    ptr &= ~mask;
+    const existence = ptr & Mask;
+    ptr &= ~Mask;
 
     var next: ?*NextType = undefined;
     if (existence & 0b100 != 0) {
@@ -338,22 +353,22 @@ const Node = opaque {
 
   fn getNodeMemory(self: *@This()) []align(8) u8 {
     var ptr = @intFromPtr(self);
-    const existence = ptr & mask;
-    ptr &= ~mask;
+    const existence = ptr & Mask;
+    ptr &= ~Mask;
 
     const memory: [*]align(8) u8 = @ptrFromInt(ptr);
     var size: usize = 0;
-    if (existence & 0b100 != 0) {
+    if (existence & MaskNext != 0) {
       size += NextTypeSize;
       ptr += NextTypeSize;
     }
 
-    if (existence & 0b010 != 0) {
+    if (existence & MaskValue != 0) {
       size += @sizeOf(i64) + @sizeOf(u16) + @as(*u16, @ptrFromInt(ptr + @sizeOf(i64))).*;
       ptr += @sizeOf(i64) + @sizeOf(u16);
     }
 
-    if (existence & 0b001 != 0) {
+    if (existence & MaskStr != 0) {
       size += @sizeOf(u16) + @as(*u16, @ptrFromInt(ptr)).*;
     }
 
@@ -591,7 +606,7 @@ pub const RadixTrie = struct {
       strlen,
       if (child.value) |childVal| childVal.str.len else 0,
     );
-    var mergedPtr: [*]u8 = @ptrFromInt(@intFromPtr(mergedNode) & ~Node.mask);
+    var mergedPtr: [*]u8 = @ptrFromInt(@intFromPtr(mergedNode) & ~Node.Mask);
     if (child.next) |childNext| {
       Node.copyAndIncrement(&mergedPtr, std.mem.asBytes(childNext));
     }
@@ -700,6 +715,164 @@ pub const RadixTrie = struct {
   pub fn deinit(self: *@This()) void {
     for (0..TotalCharacterCount) |idx| self.freeRecursive(&self.head[idx]);
   }
+
+  fn nodeCastedHead(self: *@This()) *Node {
+    return @ptrFromInt(@intFromPtr(&self.head) | @as(usize, Node.MaskNext));
+  }
+
+  pub const Iterator = struct {
+    trie: *RadixTrie,
+    nodeIdxList: std.ArrayListUnmanaged(CompositeNodes),
+    string: std.ArrayListUnmanaged(u8),
+    first: bool = true,
+
+    const CompositeNodes = struct {
+      node: *Node,
+      idx: u8,
+
+      fn getNode(self: *const @This()) *Node {
+        return self.node.getNext().?[self.idx].?;
+      }
+    };
+
+    const KVP = struct {
+      key: []const u8,
+      value: Node.Value,
+    };
+
+    /// get the index of next cild or null if none exists
+    fn getIndexOfNonNull(nextPtr: *Node.NextType, from: u8) ?u8 {
+      for (from..TotalCharacterCount) |idx| if (nextPtr[idx] != null) return @intCast(idx);
+      return null;
+    }
+
+    fn removeLastNode(self: *@This()) void {
+      const last = self.nodeIdxList.getLast();
+      const components = last.node.getNext().?[last.idx].?.getComponents();
+      self.string.items.len -= 1 + (if (components.str) |str| str.len else 0);
+      self.nodeIdxList.items.len -= 1;
+    }
+
+    /// we look for the next sibling in the last node or prune it if none exists,
+    /// keep repeating till we find a sibling or the iteration has ended
+    fn setNextSiblingIdx(self: *@This()) void {
+      while (self.nodeIdxList.items.len > 0) {
+        const nextNodeIdx = self.nodeIdxList.getLast();
+        const nextList = nextNodeIdx.node.getNext() orelse { self.removeLastNode(); continue; };
+        const nextIdx = getIndexOfNonNull(nextList, nextNodeIdx.idx+1) orelse { self.removeLastNode(); continue; };
+        self.removeLastNode();
+        self.appendNode(nextNodeIdx.node, nextIdx) catch unreachable;
+        self.nodeIdxList.items[self.nodeIdxList.items.len - 1].idx = nextIdx;
+        break;
+      }
+    }
+
+    /// Asserts that the node has next and node.next[idx] is not null
+    fn appendNode(self: *@This(), node: *Node, idx: u8) !void {
+      const components = node.getNext().?[idx].?.getNextAndStr();
+      try self.string.ensureUnusedCapacity(self.trie.allocator, 1 + if (components.str) |str| str.len else 0);
+      self.string.appendAssumeCapacity(characterFromIndex(@intCast(idx)));
+      if (components.str) |str| @memcpy(self.string.addManyAsSliceAssumeCapacity(str.len), str);
+      try self.nodeIdxList.append(self.trie.allocator, .{ .node = node, .idx = idx });
+    }
+
+    fn mustAppendFirstNonNullchild(self: *@This()) !void {
+      const nextNodeIdx = self.nodeIdxList.getLast();
+      const node = nextNodeIdx.node.getNext().?[nextNodeIdx.idx].?;
+      try self.appendNode(node, getIndexOfNonNull(node.getNext().?, 0).?);
+    }
+
+    /// Get the next value in the last slot of nodeIdxList,
+    /// this goes down the tree till a value is encountered
+    fn drillDownTillValue(self: *@This()) !void {
+      if (self.nodeIdxList.items.len == 0) return;
+      var nextNodeIdx = self.nodeIdxList.getLast();
+      var node = nextNodeIdx.node.getNext().?[nextNodeIdx.idx].?;
+
+      while (!node.hasValue()) {
+        const nextList = node.getNext().?;
+        const idx = getIndexOfNonNull(nextList, 0).?;
+        try self.appendNode(node, idx);
+        node = nextList[idx].?;
+      }
+    }
+
+    fn drilledSibling(self: *@This()) !void {
+      self.setNextSiblingIdx();
+      return self.drillDownTillValue();
+    }
+
+    fn toNextSibling(self: *@This()) !void {
+      const nextNodeIdx = self.nodeIdxList.getLast();
+      const node = nextNodeIdx.node.getNext().?[nextNodeIdx.idx].?;
+
+      if (node.hasNext()) {
+        try self.mustAppendFirstNonNullchild();
+        return self.drillDownTillValue();
+      } else {
+        return self.drilledSibling();
+      }
+    }
+
+    const InitFrom = union(enum) {
+      fragment: []const u8,
+      key: []const u8,
+    };
+
+    fn init(trie: *RadixTrie, nextInit: ?InitFrom) !@This() {
+      var self: @This() = .{
+        .trie = trie,
+        .nodeIdxList = .{},
+        .string = .{},
+      };
+
+      var node = trie.nodeCastedHead();
+      if (nextInit) |nonNullInit| {
+        switch (nonNullInit) {
+          .fragment => |fragment| {
+            try self.nodeIdxList.ensureUnusedCapacity(self.trie.allocator, fragment.len);
+            for (fragment) |char| {
+              const idx = indexFromCharacter(char);
+              try self.appendNode(node, idx);
+              const nextList = node.getNext() orelse return error.InvalidNodeKey;
+              node = nextList[idx] orelse return error.InvalidNodeKey;
+            }
+            if (!node.hasValue()) try self.drillDownTillValue();
+          },
+          .key => |key| {
+            _ = key;
+            @panic("not implemented");
+          }
+        }
+      } else {
+        while (node.hasNext() and !node.hasValue()) {
+          const nextList = node.getNext().?;
+          const idx = getIndexOfNonNull(nextList, 0).?;
+          try self.appendNode(node, idx);
+          node = nextList[idx].?;
+        }
+      }
+      return self;
+    }
+
+    pub fn next(self: *@This()) !?KVP {
+      if (self.first) self.first = false else try self.toNextSibling();
+      if (self.nodeIdxList.items.len == 0) return null;
+      return .{
+        .key = self.string.items,
+        .value = self.nodeIdxList.getLast().getNode().getComponents().value.?,
+      };
+    }
+
+    pub fn deinit(self: *@This()) void {
+      self.nodeIdxList.deinit(self.trie.allocator);
+      self.string.deinit(self.trie.allocator);
+    }
+  };
+
+  fn iterator(self: *@This(), from: ?Iterator.InitFrom) !Iterator {
+    return Iterator.init(self, from);
+  }
 };
 
 test RadixTrie {
@@ -722,12 +895,12 @@ test RadixTrie {
   try addArgsList.append(.{
     .key = "foo",
     .deathat = -1,
-    .dest = "https://example.com/10",
+    .dest = "https://example.com/foo",
   });
   try addArgsList.append(.{
     .key = "bar",
     .deathat = -2,
-    .dest = "https://example.com/20",
+    .dest = "https://example.com/bar",
   });
   for (0..1000) |i| {
     try addArgsList.append(.{
@@ -739,12 +912,12 @@ test RadixTrie {
   try addArgsList.append(.{
     .key = "foo",
     .deathat = -1,
-    .dest = "https://example.com/10",
+    .dest = "https://example.com/foo",
   });
   try addArgsList.append(.{
     .key = "bar",
     .deathat = -2,
-    .dest = "https://example.com/20",
+    .dest = "https://example.com/bar",
   });
 
   const addArgs = try addArgsList.toOwnedSlice();
@@ -755,6 +928,12 @@ test RadixTrie {
       try std.testing.expectEqual(a.deathat, val.deathat);
       try std.testing.expectEqualStrings(a.dest, val.str);
     }
+  }
+
+  var iter = try trie.iterator(null);
+  defer iter.deinit();
+  while (try iter.next()) |kvp| {
+    std.debug.print("{s}: {s}\n", .{ kvp.key, kvp.value.str });
   }
 
   const removeArgs = addArgs[2..];
