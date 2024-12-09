@@ -724,7 +724,7 @@ pub const RadixTrie = struct {
     trie: *RadixTrie,
     nodeIdxList: std.ArrayListUnmanaged(CompositeNodes),
     string: std.ArrayListUnmanaged(u8),
-    first: bool = true,
+    hasCalledValue: if (std.debug.runtime_safety) bool else void = if (std.debug.runtime_safety) false else {},
 
     const CompositeNodes = struct {
       node: *Node,
@@ -855,13 +855,22 @@ pub const RadixTrie = struct {
       return self;
     }
 
-    pub fn next(self: *@This()) !?KVP {
-      if (self.first) self.first = false else try self.toNextSibling();
+    /// Get the current stored value from te iterator
+    /// NOTE: this must be called before `iterate` or first value will be skipped
+    fn value(self: *@This()) ?KVP {
+      if (std.debug.runtime_safety) self.hasCalledValue = true;
       if (self.nodeIdxList.items.len == 0) return null;
       return .{
         .key = self.string.items,
         .value = self.nodeIdxList.getLast().getNode().getComponents().value.?,
       };
+    }
+
+    /// This is no-op after the iterator has been exhausted
+    pub fn iterate(self: *@This()) !void {
+      if (std.debug.runtime_safety and !self.hasCalledValue) std.log.warn("iterate was called before value, this is probably a mistake", .{});
+      if (self.nodeIdxList.items.len == 0) return;
+      try self.toNextSibling();
     }
 
     pub fn deinit(self: *@This()) void {
@@ -930,13 +939,32 @@ test RadixTrie {
     }
   }
 
+  // -2 for the 2 duplicate keys
+  const removeArgs = addArgs[2..];
+
+  var visitedMap = std.StringHashMap(struct{
+    offset: usize,
+    visited: bool = false,
+  }).init(arenaAllocator);
+  for (removeArgs, 0..) |args, index| try visitedMap.put(args.key, .{ .offset = index });
+
   var iter = try trie.iterator(null);
   defer iter.deinit();
-  while (try iter.next()) |kvp| {
-    std.debug.print("{s}: {s}\n", .{ kvp.key, kvp.value.str });
+  var count: usize = 0;
+  while (iter.value()) |kvp| : (try iter.iterate()) {
+    const val = visitedMap.getPtr(kvp.key).?;
+    try std.testing.expect(!val.visited);
+    try std.testing.expectEqual(removeArgs[val.offset].deathat, kvp.value.deathat);
+    try std.testing.expectEqualStrings(removeArgs[val.offset].dest, kvp.value.str);
+    val.visited = true;
+    count += 1;
+  }
+  try std.testing.expectEqual(removeArgs.len, count);
+  var mapIter = visitedMap.iterator();
+  while (mapIter.next()) |kvp| {
+    try std.testing.expect(kvp.value_ptr.visited);
   }
 
-  const removeArgs = addArgs[2..];
   for (removeArgs, 0..) |args, idx| {
     try trie.delete(args.key);
     for (removeArgs[idx+1..]) |a| {
