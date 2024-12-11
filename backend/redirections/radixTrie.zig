@@ -41,17 +41,17 @@ fn eqlBytes(a: []const u8, b: []const u8) bool {
 
   const Scan = if (std.simd.suggestVectorLength(u8)) |vec_size|
     struct {
-      pub const size = vec_size;
-      pub const Chunk = @Vector(size, u8);
-      pub inline fn isNotEqual(chunk_a: Chunk, chunk_b: Chunk) bool {
+      const size = vec_size;
+      const Chunk = @Vector(size, u8);
+      inline fn isNotEqual(chunk_a: Chunk, chunk_b: Chunk) bool {
         return @reduce(.Or, chunk_a != chunk_b);
       }
     }
   else
     struct {
-      pub const size = @sizeOf(usize);
-      pub const Chunk = usize;
-      pub inline fn isNotEqual(chunk_a: Chunk, chunk_b: Chunk) bool {
+      const size = @sizeOf(usize);
+      const Chunk = usize;
+      inline fn isNotEqual(chunk_a: Chunk, chunk_b: Chunk) bool {
         return chunk_a != chunk_b;
       }
   };
@@ -180,7 +180,7 @@ const UnpackedNodeValues = struct {
 };
 
 const Node = opaque {
-  pub const Value = struct {
+  const Value = struct {
     deathat: i64,
     str: []const u8,
   };
@@ -857,7 +857,7 @@ pub const RadixTrie = struct {
 
     /// Get the current stored value from te iterator
     /// NOTE: this must be called before `iterate` or first value will be skipped
-    fn value(self: *@This()) ?KVP {
+    pub fn value(self: *@This()) ?KVP {
       if (std.debug.runtime_safety) self.hasCalledValue = true;
       if (self.nodeIdxList.items.len == 0) return null;
       return .{

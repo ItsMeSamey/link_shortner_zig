@@ -90,6 +90,15 @@ pub fn GetStaticCircularOverwritingList(comptime usizeCapacity: usize, comptime 
       if (!self.isFull and self.end == 0) return Iterator.nilIterator();
       return .{ .list = self, .index = if (!self.isFull) 0 else self.end };
     }
+
+    pub fn getIteratorSkip(self: *Self, skipCount: usize) Iterator {
+      if (!self.isFull and self.end == 0) return Iterator.nilIterator();
+      std.debug.assert(skipCount <= self.end);
+      return .{
+        .list = self,
+        .index = if (!self.isFull) skipCount else self.end + (if (capacity > self.end + skipCount) capacity else 0) - skipCount,
+      };
+    }
   };
 }
 
