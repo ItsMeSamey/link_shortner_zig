@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const native_endianess = builtin.cpu.arch.endian();
+const native_endianness = builtin.cpu.arch.endian();
 
 const ModificationDataStruct = struct {
   /// The key (the shortened url location)
@@ -48,14 +48,14 @@ const ModificationDataOpaque = opaque {
     return @ptrFromInt(@intFromPtr(ptr) | @as(usize, @intFromEnum(data.type)));
   }
 
-  pub fn compoonents(self: *@This()) ModificationDataStruct {
+  pub fn components(self: *@This()) ModificationDataStruct {
     const ptr: [*]u8 = @ptrFromInt(@intFromPtr(self) & ~@as(usize, 0b1));
 
-    const deathat: i64 = std.mem.readInt(i64, ptr[0..@sizeOf(i64)], native_endianess);
+    const deathat: i64 = std.mem.readInt(i64, ptr[0..@sizeOf(i64)], native_endianness);
     ptr += @sizeOf(i64);
-    const keyLen = std.mem.readInt(u16, ptr[@sizeOf(u16)..], native_endianess);
+    const keyLen = std.mem.readInt(u16, ptr[@sizeOf(u16)..], native_endianness);
     ptr += @sizeOf(u16);
-    const destLen = std.mem.readInt(u16, ptr[@sizeOf(u16)..], native_endianess);
+    const destLen = std.mem.readInt(u16, ptr[@sizeOf(u16)..], native_endianness);
     ptr += @sizeOf(u16);
     const key = ptr[0..keyLen];
     ptr += keyLen;
@@ -74,9 +74,9 @@ const ModificationDataOpaque = opaque {
     const ptr: [*]u8 = @ptrFromInt(@intFromPtr(self) & ~@as(usize, 0b1));
 
     ptr += @sizeOf(i64);
-    const keyLen = std.mem.readInt(u16, ptr[@sizeOf(u16)..], native_endianess);
+    const keyLen = std.mem.readInt(u16, ptr[@sizeOf(u16)..], native_endianness);
     ptr += @sizeOf(u16);
-    const destLen = std.mem.readInt(u16, ptr[@sizeOf(u16)..], native_endianess);
+    const destLen = std.mem.readInt(u16, ptr[@sizeOf(u16)..], native_endianness);
     ptr += @sizeOf(u16);
 
     return @alignCast(ptr[0..@sizeOf(i64) + @sizeOf(u16) + keyLen + @sizeOf(u16) + destLen]);
@@ -87,17 +87,16 @@ const ModificationDataOpaque = opaque {
   }
 
   fn writeTo(self: *const @This(), writer: std.io.AnyWriter) !void {
-    try self.compoonents().writeTo(writer);
+    try self.components().writeTo(writer);
   }
 };
 
 pub fn Modifications(T: type, Size: u16) type {
   return struct {
-    const ListType = @import("staticCircularOverwritingList.zig").GetStaticCircularOverwritingList(Size, *ModificationDataOpaque);
+    const ListType = @import("staticCircularQueue.zig").GetStaticCircularOverwritingList(Size, *ModificationDataOpaque);
 
     startIndex: usize = 0,
     modifications: ListType = .{},
-    flushedTillIndex: usize = 0,
 
     pub const differenceLimit = Size;
 
@@ -131,13 +130,9 @@ pub fn Modifications(T: type, Size: u16) type {
       });
     }
 
-    pub fn flush(self: *@This(), writer: std.io.Writer) !void {
+    pub fn flushLast(self: *@This(), writer: std.io.Writer) !void {
       if (self.flushedTillIndex == self.startIndex) return;
-      var iterator = self.modifications.getIteratorSkip(self.flushedTillIndex - self.startIndex);
-      while (iterator.next()) |mod| {
-        try mod.writeTo(writer);
-        self.flushedCount += 1;
-      }
+      if (self.modifications.getLatest()) |nonnullnodeptr| nonnullnodeptr.*.writeTo(writer);
     }
   };
 }
